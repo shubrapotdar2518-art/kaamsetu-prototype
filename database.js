@@ -20,6 +20,9 @@ import {
 // 👤 USER FUNCTIONS
 // ==========================================
 
+/**
+ * Get user by ID
+ */
 export async function getUserById(userId) {
   try {
     const docSnap = await getDoc(doc(db, "users", userId));
@@ -33,6 +36,9 @@ export async function getUserById(userId) {
   }
 }
 
+/**
+ * Get all users
+ */
 export async function getAllUsers() {
   try {
     const snapshot = await getDocs(collection(db, "users"));
@@ -49,7 +55,7 @@ export async function getAllUsers() {
 // ==========================================
 
 /**
- * Create worker profile for logged-in user.
+ * Create worker profile for logged-in user
  * Document ID = User's Firebase UID
  */
 export async function createWorkerProfile(workerData) {
@@ -136,7 +142,6 @@ export async function updateWorkerProfile(updatedData) {
     const protectedFields = ["userId", "createdAt", "rating", "totalJobs"];
     protectedFields.forEach(field => delete updatedData[field]);
 
-    // Add updated timestamp
     updatedData.updatedAt = serverTimestamp();
 
     await updateDoc(doc(db, "workers", currentUser.uid), updatedData);
@@ -178,7 +183,7 @@ export async function toggleAvailability() {
 }
 
 /**
- * Get all workers (for browsing)
+ * Get all workers
  */
 export async function getAllWorkers() {
   try {
@@ -270,9 +275,192 @@ export async function getWorkerFullInfo(userId) {
 
 
 // ==========================================
-// 💼 JOB FUNCTIONS (from before)
+// 🏢 EMPLOYER PROFILE FUNCTIONS
 // ==========================================
 
+/**
+ * Create employer profile for logged-in user
+ * Document ID = User's Firebase UID
+ */
+export async function createEmployerProfile(employerData) {
+  try {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      throw new Error("Please login first to create employer profile");
+    }
+
+    // Check if user is actually an "employer" type
+    const userDoc = await getDoc(doc(db, "users", currentUser.uid));
+    if (!userDoc.exists() || userDoc.data().userType !== "employer") {
+      throw new Error("Only employer-type users can create employer profile");
+    }
+
+    // Prepare employer profile data
+    const profile = {
+      userId: currentUser.uid,
+      companyName: employerData.companyName || "",
+      companyType: employerData.companyType || "",
+      contactPerson: employerData.contactPerson || "",
+      location: employerData.location || "",
+      address: employerData.address || "",
+      totalJobsPosted: 0,
+      activeJobs: 0,
+      rating: 0,
+      verified: false,
+      bio: employerData.bio || "",
+      gstNumber: employerData.gstNumber || "",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    // Save with UID as document ID
+    await setDoc(doc(db, "employers", currentUser.uid), profile);
+
+    console.log("✅ Employer profile created for:", currentUser.uid);
+    return currentUser.uid;
+  } catch (error) {
+    console.error("❌ Error creating employer profile:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get employer profile by userId
+ */
+export async function getEmployerProfile(userId) {
+  try {
+    const docSnap = await getDoc(doc(db, "employers", userId));
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data() };
+    }
+    return null;
+  } catch (error) {
+    console.error("❌ Error getting employer profile:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get current logged-in employer's profile
+ */
+export async function getMyEmployerProfile() {
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error("Please login first");
+  }
+  return await getEmployerProfile(currentUser.uid);
+}
+
+/**
+ * Update employer profile (only own profile)
+ */
+export async function updateEmployerProfile(updatedData) {
+  try {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      throw new Error("Please login first");
+    }
+
+    // Never allow changing these fields
+    const protectedFields = [
+      "userId",
+      "createdAt",
+      "rating",
+      "totalJobsPosted",
+      "activeJobs",
+      "verified"
+    ];
+    protectedFields.forEach(field => delete updatedData[field]);
+
+    updatedData.updatedAt = serverTimestamp();
+
+    await updateDoc(doc(db, "employers", currentUser.uid), updatedData);
+    console.log("✅ Employer profile updated!");
+    return true;
+  } catch (error) {
+    console.error("❌ Error updating employer profile:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get all employers (for admin/browsing)
+ */
+export async function getAllEmployers() {
+  try {
+    const snapshot = await getDocs(collection(db, "employers"));
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error("❌ Error getting employers:", error);
+    return [];
+  }
+}
+
+/**
+ * Get employers by location
+ */
+export async function getEmployersByLocation(location) {
+  try {
+    const q = query(
+      collection(db, "employers"),
+      where("location", "==", location)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error("❌ Error getting employers by location:", error);
+    return [];
+  }
+}
+
+/**
+ * Get verified employers only
+ */
+export async function getVerifiedEmployers() {
+  try {
+    const q = query(
+      collection(db, "employers"),
+      where("verified", "==", true)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error("❌ Error getting verified employers:", error);
+    return [];
+  }
+}
+
+/**
+ * Get employer with FULL info (user + employer profile combined)
+ */
+export async function getEmployerFullInfo(userId) {
+  try {
+    const userProfile = await getUserById(userId);
+    const employerProfile = await getEmployerProfile(userId);
+
+    if (!userProfile || !employerProfile) {
+      return null;
+    }
+
+    return {
+      ...userProfile,
+      ...employerProfile,
+      id: userId
+    };
+  } catch (error) {
+    console.error("❌ Error getting employer full info:", error);
+    return null;
+  }
+}
+
+
+// ==========================================
+// 💼 JOB FUNCTIONS (Basic - Will expand in Feature 5)
+// ==========================================
+
+/**
+ * Add a new job
+ */
 export async function addJob(jobData) {
   try {
     const docRef = await addDoc(collection(db, "jobs"), {
@@ -287,6 +475,9 @@ export async function addJob(jobData) {
   }
 }
 
+/**
+ * Get all open jobs
+ */
 export async function getOpenJobs() {
   try {
     const q = query(
