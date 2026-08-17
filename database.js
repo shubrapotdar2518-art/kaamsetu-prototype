@@ -1,183 +1,284 @@
 // database.js
-import { db } from "./firebase-config.js";
-import { 
-  collection, 
-  addDoc, 
-  getDocs, 
+import { db, auth } from "./firebase-config.js";
+import {
+  collection,
+  addDoc,
+  getDocs,
   getDoc,
   doc,
   setDoc,
   updateDoc,
   deleteDoc,
-  query, 
-  where 
+  query,
+  where,
+  orderBy,
+  limit,
+  serverTimestamp
 } from "firebase/firestore";
 
 // ==========================================
-// 👤 USER FUNCTIONS (Base for Everyone)
+// 👤 USER FUNCTIONS
 // ==========================================
 
-// ➕ CREATE A NEW USER (works for both workers and employers)
-export async function createUser(userData) {
+export async function getUserById(userId) {
   try {
-    // userData should have: name, phone, email, userType
-    const docRef = await addDoc(collection(db, "users"), {
-      ...userData,
-      createdAt: new Date(),
-      isActive: true
-    });
-    console.log("✅ User created! ID:", docRef.id);
-    return docRef.id;
+    const docSnap = await getDoc(doc(db, "users", userId));
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data() };
+    }
+    return null;
   } catch (error) {
-    console.error("❌ Error creating user:", error);
+    console.error("❌ Error getting user:", error);
     throw error;
   }
 }
 
-// 📋 GET USER BY ID
-export async function getUserById(userId) {
-  try {
-    const docRef = doc(db, "users", userId);
-    const docSnap = await getDoc(docRef);
-    
-    if (docSnap.exists()) {
-      return { id: docSnap.id, ...docSnap.data() };
-    } else {
-      console.log("❌ User not found");
-      return null;
-    }
-  } catch (error) {
-    console.error("❌ Error getting user:", error);
-  }
-}
-
-// 📋 GET ALL USERS
 export async function getAllUsers() {
   try {
-    const querySnapshot = await getDocs(collection(db, "users"));
-    const users = [];
-    querySnapshot.forEach((doc) => {
-      users.push({ id: doc.id, ...doc.data() });
-    });
-    return users;
+    const snapshot = await getDocs(collection(db, "users"));
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   } catch (error) {
     console.error("❌ Error getting users:", error);
     return [];
   }
 }
 
-// 🔍 GET USER BY PHONE
-export async function getUserByPhone(phone) {
+
+// ==========================================
+// 👷 WORKER PROFILE FUNCTIONS
+// ==========================================
+
+/**
+ * Create worker profile for logged-in user.
+ * Document ID = User's Firebase UID
+ */
+export async function createWorkerProfile(workerData) {
   try {
-    const q = query(
-      collection(db, "users"),
-      where("phone", "==", phone)
-    );
-    const querySnapshot = await getDocs(q);
-    
-    if (querySnapshot.empty) {
-      console.log("❌ No user found with phone:", phone);
-      return null;
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      throw new Error("Please login first to create worker profile");
     }
-    
-    const users = [];
-    querySnapshot.forEach((doc) => {
-      users.push({ id: doc.id, ...doc.data() });
-    });
-    return users[0]; // Return first match
+
+    // Check if user is actually a "worker" type
+    const userDoc = await getDoc(doc(db, "users", currentUser.uid));
+    if (!userDoc.exists() || userDoc.data().userType !== "worker") {
+      throw new Error("Only worker-type users can create worker profile");
+    }
+
+    // Prepare worker profile data
+    const profile = {
+      userId: currentUser.uid,
+      skills: workerData.skills || [],
+      primarySkill: workerData.primarySkill || "",
+      experience: workerData.experience || 0,
+      dailyRate: workerData.dailyRate || 0,
+      location: workerData.location || "",
+      address: workerData.address || "",
+      isAvailable: workerData.isAvailable ?? true,
+      rating: 0,
+      totalJobs: 0,
+      bio: workerData.bio || "",
+      languages: workerData.languages || [],
+      hasOwnTools: workerData.hasOwnTools ?? false,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    // Save with UID as document ID
+    await setDoc(doc(db, "workers", currentUser.uid), profile);
+
+    console.log("✅ Worker profile created for:", currentUser.uid);
+    return currentUser.uid;
   } catch (error) {
-    console.error("❌ Error getting user by phone:", error);
+    console.error("❌ Error creating worker profile:", error);
+    throw error;
   }
 }
 
-// 🔍 GET USERS BY TYPE (all workers OR all employers)
-export async function getUsersByType(userType) {
+/**
+ * Get worker profile by userId
+ */
+export async function getWorkerProfile(userId) {
   try {
-    const q = query(
-      collection(db, "users"),
-      where("userType", "==", userType)
-    );
-    const querySnapshot = await getDocs(q);
-    const users = [];
-    querySnapshot.forEach((doc) => {
-      users.push({ id: doc.id, ...doc.data() });
-    });
-    return users;
+    const docSnap = await getDoc(doc(db, "workers", userId));
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data() };
+    }
+    return null;
   } catch (error) {
-    console.error("❌ Error getting users by type:", error);
-    return [];
+    console.error("❌ Error getting worker profile:", error);
+    throw error;
   }
 }
 
-// ✏️ UPDATE USER
-export async function updateUser(userId, updatedData) {
+/**
+ * Get current logged-in worker's profile
+ */
+export async function getMyWorkerProfile() {
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error("Please login first");
+  }
+  return await getWorkerProfile(currentUser.uid);
+}
+
+/**
+ * Update worker profile (only own profile)
+ */
+export async function updateWorkerProfile(updatedData) {
   try {
-    const userRef = doc(db, "users", userId);
-    await updateDoc(userRef, updatedData);
-    console.log("✅ User updated!");
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      throw new Error("Please login first");
+    }
+
+    // Never allow changing these fields
+    const protectedFields = ["userId", "createdAt", "rating", "totalJobs"];
+    protectedFields.forEach(field => delete updatedData[field]);
+
+    // Add updated timestamp
+    updatedData.updatedAt = serverTimestamp();
+
+    await updateDoc(doc(db, "workers", currentUser.uid), updatedData);
+    console.log("✅ Worker profile updated!");
     return true;
   } catch (error) {
-    console.error("❌ Error updating user:", error);
-    return false;
+    console.error("❌ Error updating worker profile:", error);
+    throw error;
   }
 }
 
-// 🗑️ DEACTIVATE USER (soft delete - safer than actual delete)
-export async function deactivateUser(userId) {
+/**
+ * Toggle worker availability (available/busy)
+ */
+export async function toggleAvailability() {
   try {
-    const userRef = doc(db, "users", userId);
-    await updateDoc(userRef, { isActive: false });
-    console.log("✅ User deactivated!");
-    return true;
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      throw new Error("Please login first");
+    }
+
+    const profile = await getMyWorkerProfile();
+    if (!profile) {
+      throw new Error("Worker profile not found");
+    }
+
+    const newStatus = !profile.isAvailable;
+    await updateDoc(doc(db, "workers", currentUser.uid), {
+      isAvailable: newStatus,
+      updatedAt: serverTimestamp()
+    });
+
+    console.log(`✅ Availability changed to: ${newStatus ? "AVAILABLE" : "BUSY"}`);
+    return newStatus;
   } catch (error) {
-    console.error("❌ Error deactivating user:", error);
-    return false;
+    console.error("❌ Error toggling availability:", error);
+    throw error;
   }
 }
 
-
-// ==========================================
-// 👷 WORKER FUNCTIONS
-// ==========================================
-
-// ➕ ADD A NEW WORKER
-export async function addWorker(workerData) {
-  try {
-    const docRef = await addDoc(collection(db, "workers"), workerData);
-    console.log("✅ Worker added! ID:", docRef.id);
-    return docRef.id;
-  } catch (error) {
-    console.error("❌ Error adding worker:", error);
-  }
-}
-
-// 📋 GET ALL WORKERS
+/**
+ * Get all workers (for browsing)
+ */
 export async function getAllWorkers() {
   try {
-    const querySnapshot = await getDocs(collection(db, "workers"));
-    const workers = [];
-    querySnapshot.forEach((doc) => {
-      workers.push({ id: doc.id, ...doc.data() });
-    });
-    return workers;
+    const snapshot = await getDocs(collection(db, "workers"));
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   } catch (error) {
     console.error("❌ Error getting workers:", error);
     return [];
   }
 }
 
+/**
+ * Get workers by skill (only available ones)
+ */
+export async function getWorkersBySkill(skill) {
+  try {
+    const q = query(
+      collection(db, "workers"),
+      where("skills", "array-contains", skill.toLowerCase()),
+      where("isAvailable", "==", true)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error("❌ Error getting workers by skill:", error);
+    return [];
+  }
+}
+
+/**
+ * Get workers by location (only available)
+ */
+export async function getWorkersByLocation(location) {
+  try {
+    const q = query(
+      collection(db, "workers"),
+      where("location", "==", location),
+      where("isAvailable", "==", true)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error("❌ Error getting workers by location:", error);
+    return [];
+  }
+}
+
+/**
+ * Search workers by skill AND location
+ */
+export async function searchWorkers(skill, location) {
+  try {
+    const q = query(
+      collection(db, "workers"),
+      where("skills", "array-contains", skill.toLowerCase()),
+      where("location", "==", location),
+      where("isAvailable", "==", true)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error("❌ Error searching workers:", error);
+    return [];
+  }
+}
+
+/**
+ * Get worker with FULL info (user + worker profile combined)
+ */
+export async function getWorkerFullInfo(userId) {
+  try {
+    const userProfile = await getUserById(userId);
+    const workerProfile = await getWorkerProfile(userId);
+
+    if (!userProfile || !workerProfile) {
+      return null;
+    }
+
+    return {
+      ...userProfile,
+      ...workerProfile,
+      id: userId
+    };
+  } catch (error) {
+    console.error("❌ Error getting worker full info:", error);
+    return null;
+  }
+}
+
 
 // ==========================================
-// 💼 JOB FUNCTIONS
+// 💼 JOB FUNCTIONS (from before)
 // ==========================================
 
-// ➕ ADD A NEW JOB
 export async function addJob(jobData) {
   try {
     const docRef = await addDoc(collection(db, "jobs"), {
       ...jobData,
       status: "open",
-      postedDate: new Date()
+      postedDate: serverTimestamp()
     });
     console.log("✅ Job added! ID:", docRef.id);
     return docRef.id;
@@ -186,19 +287,14 @@ export async function addJob(jobData) {
   }
 }
 
-// 📋 GET ALL OPEN JOBS
 export async function getOpenJobs() {
   try {
     const q = query(
       collection(db, "jobs"),
       where("status", "==", "open")
     );
-    const querySnapshot = await getDocs(q);
-    const jobs = [];
-    querySnapshot.forEach((doc) => {
-      jobs.push({ id: doc.id, ...doc.data() });
-    });
-    return jobs;
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   } catch (error) {
     console.error("❌ Error getting jobs:", error);
     return [];
