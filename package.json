@@ -1,0 +1,24 @@
+{
+  "name": "kaamsetu-prototype",
+  "version": "1.0.0",
+  "description": "Prototype repository for KaamSetu, a job platform connecting daily wage workers and employers with frontend, backend, and database development.",
+  "main": "database.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shubrapotdar2518-art/kaamsetu-prototype.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/shubrapotdar2518-art/kaamsetu-prototype/issues"
+  },
+  "homepage": "https://github.com/shubrapotdar2518-art/kaamsetu-prototype#readme",
+  "dependencies": {
+    "firebase": "^12.17.1"
+  }
+}
