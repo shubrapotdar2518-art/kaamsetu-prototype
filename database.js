@@ -6,11 +6,135 @@ import {
   getDocs, 
   getDoc,
   doc,
+  setDoc,
   updateDoc,
   deleteDoc,
   query, 
   where 
 } from "firebase/firestore";
+
+// ==========================================
+// 👤 USER FUNCTIONS (Base for Everyone)
+// ==========================================
+
+// ➕ CREATE A NEW USER (works for both workers and employers)
+export async function createUser(userData) {
+  try {
+    // userData should have: name, phone, email, userType
+    const docRef = await addDoc(collection(db, "users"), {
+      ...userData,
+      createdAt: new Date(),
+      isActive: true
+    });
+    console.log("✅ User created! ID:", docRef.id);
+    return docRef.id;
+  } catch (error) {
+    console.error("❌ Error creating user:", error);
+    throw error;
+  }
+}
+
+// 📋 GET USER BY ID
+export async function getUserById(userId) {
+  try {
+    const docRef = doc(db, "users", userId);
+    const docSnap = await getDoc(docRef);
+    
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data() };
+    } else {
+      console.log("❌ User not found");
+      return null;
+    }
+  } catch (error) {
+    console.error("❌ Error getting user:", error);
+  }
+}
+
+// 📋 GET ALL USERS
+export async function getAllUsers() {
+  try {
+    const querySnapshot = await getDocs(collection(db, "users"));
+    const users = [];
+    querySnapshot.forEach((doc) => {
+      users.push({ id: doc.id, ...doc.data() });
+    });
+    return users;
+  } catch (error) {
+    console.error("❌ Error getting users:", error);
+    return [];
+  }
+}
+
+// 🔍 GET USER BY PHONE
+export async function getUserByPhone(phone) {
+  try {
+    const q = query(
+      collection(db, "users"),
+      where("phone", "==", phone)
+    );
+    const querySnapshot = await getDocs(q);
+    
+    if (querySnapshot.empty) {
+      console.log("❌ No user found with phone:", phone);
+      return null;
+    }
+    
+    const users = [];
+    querySnapshot.forEach((doc) => {
+      users.push({ id: doc.id, ...doc.data() });
+    });
+    return users[0]; // Return first match
+  } catch (error) {
+    console.error("❌ Error getting user by phone:", error);
+  }
+}
+
+// 🔍 GET USERS BY TYPE (all workers OR all employers)
+export async function getUsersByType(userType) {
+  try {
+    const q = query(
+      collection(db, "users"),
+      where("userType", "==", userType)
+    );
+    const querySnapshot = await getDocs(q);
+    const users = [];
+    querySnapshot.forEach((doc) => {
+      users.push({ id: doc.id, ...doc.data() });
+    });
+    return users;
+  } catch (error) {
+    console.error("❌ Error getting users by type:", error);
+    return [];
+  }
+}
+
+// ✏️ UPDATE USER
+export async function updateUser(userId, updatedData) {
+  try {
+    const userRef = doc(db, "users", userId);
+    await updateDoc(userRef, updatedData);
+    console.log("✅ User updated!");
+    return true;
+  } catch (error) {
+    console.error("❌ Error updating user:", error);
+    return false;
+  }
+}
+
+// 🗑️ DEACTIVATE USER (soft delete - safer than actual delete)
+export async function deactivateUser(userId) {
+  try {
+    const userRef = doc(db, "users", userId);
+    await updateDoc(userRef, { isActive: false });
+    console.log("✅ User deactivated!");
+    return true;
+  } catch (error) {
+    console.error("❌ Error deactivating user:", error);
+    return false;
+  }
+}
+
 
 // ==========================================
 // 👷 WORKER FUNCTIONS
@@ -39,47 +163,6 @@ export async function getAllWorkers() {
   } catch (error) {
     console.error("❌ Error getting workers:", error);
     return [];
-  }
-}
-
-// 🔍 GET WORKERS BY SKILL
-export async function getWorkersBySkill(skill) {
-  try {
-    const q = query(
-      collection(db, "workers"),
-      where("skill", "==", skill),
-      where("isAvailable", "==", true)
-    );
-    const querySnapshot = await getDocs(q);
-    const workers = [];
-    querySnapshot.forEach((doc) => {
-      workers.push({ id: doc.id, ...doc.data() });
-    });
-    return workers;
-  } catch (error) {
-    console.error("❌ Error getting workers by skill:", error);
-    return [];
-  }
-}
-
-// ✏️ UPDATE WORKER
-export async function updateWorker(workerId, updatedData) {
-  try {
-    const workerRef = doc(db, "workers", workerId);
-    await updateDoc(workerRef, updatedData);
-    console.log("✅ Worker updated!");
-  } catch (error) {
-    console.error("❌ Error updating worker:", error);
-  }
-}
-
-// 🗑️ DELETE WORKER
-export async function deleteWorker(workerId) {
-  try {
-    await deleteDoc(doc(db, "workers", workerId));
-    console.log("✅ Worker deleted!");
-  } catch (error) {
-    console.error("❌ Error deleting worker:", error);
   }
 }
 
@@ -118,132 +201,6 @@ export async function getOpenJobs() {
     return jobs;
   } catch (error) {
     console.error("❌ Error getting jobs:", error);
-    return [];
-  }
-}
-
-// 🔍 GET JOBS BY SKILL
-export async function getJobsBySkill(skill) {
-  try {
-    const q = query(
-      collection(db, "jobs"),
-      where("skillRequired", "==", skill),
-      where("status", "==", "open")
-    );
-    const querySnapshot = await getDocs(q);
-    const jobs = [];
-    querySnapshot.forEach((doc) => {
-      jobs.push({ id: doc.id, ...doc.data() });
-    });
-    return jobs;
-  } catch (error) {
-    console.error("❌ Error getting jobs by skill:", error);
-    return [];
-  }
-}
-
-// 🔍 GET JOBS BY LOCATION
-export async function getJobsByLocation(location) {
-  try {
-    const q = query(
-      collection(db, "jobs"),
-      where("location", "==", location),
-      where("status", "==", "open")
-    );
-    const querySnapshot = await getDocs(q);
-    const jobs = [];
-    querySnapshot.forEach((doc) => {
-      jobs.push({ id: doc.id, ...doc.data() });
-    });
-    return jobs;
-  } catch (error) {
-    console.error("❌ Error getting jobs by location:", error);
-    return [];
-  }
-}
-
-// ✏️ UPDATE JOB STATUS
-export async function updateJobStatus(jobId, newStatus) {
-  try {
-    const jobRef = doc(db, "jobs", jobId);
-    await updateDoc(jobRef, { status: newStatus });
-    console.log("✅ Job status updated to:", newStatus);
-  } catch (error) {
-    console.error("❌ Error updating job:", error);
-  }
-}
-
-
-// ==========================================
-// 📋 APPLICATION FUNCTIONS
-// ==========================================
-
-// ➕ WORKER APPLIES FOR JOB
-export async function applyForJob(jobId, workerId) {
-  try {
-    const docRef = await addDoc(collection(db, "applications"), {
-      jobId: jobId,
-      workerId: workerId,
-      status: "pending",
-      appliedDate: new Date()
-    });
-    console.log("✅ Application submitted! ID:", docRef.id);
-    return docRef.id;
-  } catch (error) {
-    console.error("❌ Error applying for job:", error);
-  }
-}
-
-// 📋 GET APPLICATIONS FOR A JOB
-export async function getJobApplications(jobId) {
-  try {
-    const q = query(
-      collection(db, "applications"),
-      where("jobId", "==", jobId)
-    );
-    const querySnapshot = await getDocs(q);
-    const applications = [];
-    querySnapshot.forEach((doc) => {
-      applications.push({ id: doc.id, ...doc.data() });
-    });
-    return applications;
-  } catch (error) {
-    console.error("❌ Error getting applications:", error);
-    return [];
-  }
-}
-
-
-// ==========================================
-// 🎯 RECOMMENDATION FUNCTION
-// ==========================================
-
-// 🎯 GET RECOMMENDED JOBS FOR WORKER (based on skill + location)
-export async function getRecommendedJobs(workerSkill, workerLocation) {
-  try {
-    // Get all open jobs with matching skill
-    const q = query(
-      collection(db, "jobs"),
-      where("skillRequired", "==", workerSkill),
-      where("status", "==", "open")
-    );
-    const querySnapshot = await getDocs(q);
-    const jobs = [];
-    querySnapshot.forEach((doc) => {
-      jobs.push({ id: doc.id, ...doc.data() });
-    });
-    
-    // Sort: same location jobs first
-    const sameLocation = jobs.filter(j => 
-      j.location.toLowerCase().includes(workerLocation.toLowerCase())
-    );
-    const otherLocations = jobs.filter(j => 
-      !j.location.toLowerCase().includes(workerLocation.toLowerCase())
-    );
-    
-    return [...sameLocation, ...otherLocations];
-  } catch (error) {
-    console.error("❌ Error getting recommendations:", error);
     return [];
   }
 }
