@@ -1,0 +1,6 @@
+{
+  "name": "KaamSetu",
+  "description": "Connecting daily-wage workers with local employers and work opportunities with multi-language support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
