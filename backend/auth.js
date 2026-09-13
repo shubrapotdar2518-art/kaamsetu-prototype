@@ -139,3 +139,33 @@ export function waitForAuthState() {
     });
   });
 }
+
+/**
+ * Create the Firestore profile for an ALREADY-created Firebase Auth user.
+ * Used when account creation and role selection happen on different screens.
+ */
+export async function createUserProfile(uid, profileData) {
+  try {
+    if (!["worker", "employer"].includes(profileData.userType)) {
+      throw new Error("User type must be worker or employer.");
+    }
+
+    await setDoc(doc(db, "users", uid), {
+      userId: uid,
+      email: profileData.email ?? "",
+      name: profileData.name,
+      phone: profileData.phone ?? "",
+      userType: profileData.userType,
+      location: profileData.location ?? "",
+      isActive: true,
+      createdAt: serverTimestamp()
+    });
+
+    console.log("✅ Profile created for:", uid);
+
+    return { uid };
+  } catch (error) {
+    console.error("❌ Profile creation failed:", error.message);
+    throw error;
+  }
+}
