@@ -5,6 +5,7 @@ import { KaamSetuLogo } from '../../components/KaamSetuLogo';
 import { LanguageSwitcher } from '../../components/LanguageSwitcher';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { useApp } from '../../context/AppContext';
+import { createWorkerProfile } from '../../../kaamsetu-prototype/backend/database';
 
 const PRESET_SKILLS = [
   'Carpenter',
@@ -51,7 +52,7 @@ export const WorkerDetailsPage: React.FC = () => {
     setSelectedPhotos(updated);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!skills.trim()) {
       setError('Please provide your primary skill');
@@ -70,8 +71,30 @@ export const WorkerDetailsPage: React.FC = () => {
       photos,
     });
 
-    showToast('Work profile completed! Welcome to KaamSetu Dashboard.');
-    navigate('/worker-dashboard');
+    try {
+      const skillsArray = [
+        skills.trim().toLowerCase(),
+        ...additionalSkills
+          .split(',')
+          .map((s) => s.trim().toLowerCase())
+          .filter((s) => s.length > 0),
+      ];
+
+      await createWorkerProfile({
+        primarySkill: skills.trim(),
+        skills: skillsArray,
+        experience: Number(experience) || 0,
+        dailyRate: Number(dailyWage) || 0,
+        location: userProfile.city || '',
+        address: userProfile.address || '',
+      });
+
+      showToast('Work profile completed! Welcome to KaamSetu Dashboard.');
+      navigate('/worker-dashboard');
+    } catch (error) {
+      showToast('Could not save your work profile. Please try again.', 'error');
+      console.error('Error saving worker profile:', error);
+    }
   };
 
   return (
