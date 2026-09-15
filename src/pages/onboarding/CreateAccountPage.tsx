@@ -75,7 +75,7 @@ export const CreateAccountPage: React.FC = () => {
           phone: '',
         });
 
-                showToast('Account created! Verification link sent to your email address!');
+        showToast('Account created! Verification link sent to your email address!');
         navigate('/verify-otp', { state: { method: 'email' } });
            } catch (firebaseError: any) {
         if (firebaseError.code === 'auth/email-already-in-use') {
@@ -88,14 +88,36 @@ export const CreateAccountPage: React.FC = () => {
         console.error('Firebase signup error:', firebaseError);
         setIsSubmitting(false);
       }
-    } else {
-      updateUserProfile({
-        name: fullName.trim(),
-        phone: phone.trim(),
-        email: '',
-      });
-           showToast('OTP sent to your mobile number!');
-      navigate('/verify-otp', { state: { method: 'mobile' } });
+        } else {
+      try {
+        const fakeEmail = `${phone.trim()}@kaamsetu.app`;
+
+        const userCredential = await createUserWithEmailAndPassword(
+          auth,
+          fakeEmail,
+          password
+        );
+
+        updateUserProfile({
+          uid: userCredential.user.uid,
+          name: fullName.trim(),
+          phone: phone.trim(),
+          email: '',
+        });
+
+        showToast('OTP sent to your mobile number!');
+        navigate('/verify-otp', { state: { method: 'mobile' } });
+      } catch (firebaseError: any) {
+        if (firebaseError.code === 'auth/email-already-in-use') {
+          setError('An account with this mobile number already exists.');
+        } else if (firebaseError.code === 'auth/weak-password') {
+          setError('Password is too weak. Please use at least 6 characters.');
+        } else {
+          setError('Could not create account. Please try again.');
+        }
+        console.error('Firebase mobile signup error:', firebaseError);
+        setIsSubmitting(false);
+      }
     }
   };
 
