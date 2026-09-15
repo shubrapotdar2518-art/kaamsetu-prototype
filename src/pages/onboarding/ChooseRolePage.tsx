@@ -18,12 +18,15 @@ export const ChooseRolePage: React.FC = () => {
 
     try {
       if (userProfile.uid) {
-        await createUserProfile(userProfile.uid, {
+                await createUserProfile(userProfile.uid, {
           name: userProfile.name,
           email: userProfile.email,
           phone: userProfile.phone,
           userType: 'worker',
           location: userProfile.city,
+          address: userProfile.address,
+          landmark: userProfile.landmark,
+          pincode: userProfile.pincode,
         });
       }
     } catch (error) {
@@ -56,6 +59,7 @@ export const ChooseRolePage: React.FC = () => {
 
     navigate('/employer-dashboard');
   };
+  
   return (
     <div className="min-h-screen bg-[#F8FAF8] flex flex-col justify-between p-4 sm:p-6 lg:p-8">
       {/* Header */}
