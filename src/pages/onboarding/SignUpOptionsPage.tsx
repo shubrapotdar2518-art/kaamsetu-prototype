@@ -148,7 +148,7 @@ export const SignUpOptionsPage: React.FC = () => {
               {t('alreadyHaveAccount', 'Already have an account?')}{' '}
               <button
                 type="button"
-                onClick={() => navigate('/create-account')}
+                onClick={() => navigate('/login')}
                 className="text-[#15803D] font-bold hover:underline"
               >
                 {t('login', 'Login')}

@@ -9,10 +9,12 @@ import { WelcomePage } from './pages/onboarding/WelcomePage';
 import { LanguagePage } from './pages/onboarding/LanguagePage';
 import { SignUpOptionsPage } from './pages/onboarding/SignUpOptionsPage';
 import { CreateAccountPage } from './pages/onboarding/CreateAccountPage';
+import { LoginPage } from './pages/onboarding/LoginPage';
 import { VerifyOtpPage } from './pages/onboarding/VerifyOtpPage';
 import { BasicDetailsPage } from './pages/onboarding/BasicDetailsPage';
 import { ChooseRolePage } from './pages/onboarding/ChooseRolePage';
 import { WorkerDetailsPage } from './pages/onboarding/WorkerDetailsPage';
+
 
 // Worker Pages
 import { WorkerDashboardPage } from './pages/worker/WorkerDashboardPage';
@@ -47,6 +49,7 @@ export function App() {
             <Route path="/language" element={<LanguagePage />} />
             <Route path="/signup-options" element={<SignUpOptionsPage />} />
             <Route path="/create-account" element={<CreateAccountPage />} />
+            <Route path="/login" element={<LoginPage />} />
             <Route path="/verify-otp" element={<VerifyOtpPage />} />
             <Route path="/basic-details" element={<BasicDetailsPage />} />
             <Route path="/choose-role" element={<ChooseRolePage />} />
