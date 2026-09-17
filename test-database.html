@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KaamSetu Database Test</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: Arial, sans-serif;
+        background: #f0f4f8;
+        padding: 40px 20px;
+        min-height: 100vh;
+      }
+
+      .container {
+        max-width: 700px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        color: #1a1a2e;
+        margin-bottom: 10px;
+      }
+
+      .subtitle {
+        color: #666;
+        margin-bottom: 30px;
+      }
+
+      .test-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+      }
+
+      .test-card h3 {
+        color: #15803d;
+        margin-bottom: 8px;
+      }
+
+      .test-card p {
+        color: #555;
+        font-size: 14px;
+        margin-bottom: 16px;
+      }
+
+      button {
+        padding: 12px 24px;
+        border: none;
+        border-radius: 12px;
+        font-weight: bold;
+        font-size: 14px;
+        cursor: pointer;
+        margin-right: 10px;
+        margin-bottom: 10px;
+      }
+
+      .btn-primary {
+        background: #15803d;
+        color: white;
+      }
+
+      .btn-primary:hover {
+        background: #166534;
+      }
+
+      .btn-danger {
+        background: #dc3545;
+        color: white;
+      }
+
+      .btn-blue {
+        background: #174ea6;
+        color: white;
+      }
+
+      #log {
+        background: #1a1a2e;
+        color: #00ff88;
+        border-radius: 12px;
+        padding: 20px;
+        font-family: monospace;
+        font-size: 13px;
+        min-height: 200px;
+        max-height: 500px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+
+      .status {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: bold;
+        margin-bottom: 16px;
+      }
+
+      .status-waiting {
+        background: #fff3cd;
+        color: #856404;
+      }
+
+      .status-success {
+        background: #d4edda;
+        color: #155724;
+      }
+
+      .status-error {
+        background: #f8d7da;
+        color: #721c24;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>KaamSetu Database Test</h1>
+      <p class="subtitle">
+        Test your Firebase connection and database operations
+      </p>
+
+      <div class="test-card">
+        <h3>Step 1: Firebase Connection</h3>
+        <p>Check if Firebase is connected to your project.</p>
+        <span class="status status-waiting" id="connection-status"
+          >Waiting...</span
+        >
+        <br /><br />
+        <button class="btn-primary" onclick="testConnection()">
+          Test Connection
+        </button>
+      </div>
+
+      <div class="test-card">
+        <h3>Step 2: Create a Test User</h3>
+        <p>Register a test worker in Authentication and Firestore.</p>
+        <button class="btn-primary" onclick="testCreateUser()">
+          Create Test Worker
+        </button>
+        <button class="btn-blue" onclick="testCreateEmployer()">
+          Create Test Employer
+        </button>
+      </div>
+
+      <div class="test-card">
+        <h3>Step 3: Read Data Back</h3>
+        <p>Fetch all users and workers from the database.</p>
+        <button class="btn-primary" onclick="testReadData()">
+          Read All Data
+        </button>
+      </div>
+
+      <div class="test-card">
+        <h3>Console Log</h3>
+        <div id="log">Waiting for tests...\n</div>
+        <br />
+        <button class="btn-danger" onclick="clearLog()">Clear Log</button>
+      </div>
+    </div>
+
+    <script type="module">
+      import { auth, db } from "./firebase-config.js";
+      import { registerUser, loginUser, logoutUser } from "./auth.js";
+      import {
+        getUserById,
+        getAllUsers,
+        createWorkerProfile,
+        getWorkerProfile,
+        getAllWorkers,
+        createEmployerProfile,
+        getEmployerProfile,
+        getAllEmployers,
+      } from "./database.js";
+
+      // Simple logger
+      function log(message) {
+        const logDiv = document.getElementById("log");
+        const time = new Date().toLocaleTimeString();
+        logDiv.textContent += `[${time}] ${message}\n`;
+        logDiv.scrollTop = logDiv.scrollHeight;
+        console.log(message);
+      }
+
+      function setStatus(elementId, text, type) {
+        const el = document.getElementById(elementId);
+        el.textContent = text;
+        el.className = "status status-" + type;
+      }
+
+      // TEST 1: Check Firebase Connection
+      window.testConnection = async function () {
+        try {
+          log("Testing Firebase connection...");
+
+          if (auth) {
+            log("Authentication module loaded.");
+          }
+
+          if (db) {
+            log("Firestore database module loaded.");
+          }
+
+          setStatus("connection-status", "Connected!", "success");
+          log("Firebase is connected successfully!");
+        } catch (error) {
+          setStatus("connection-status", "Failed!", "error");
+          log("Connection FAILED: " + error.message);
+        }
+      };
+
+      // TEST 2: Create a Test Worker
+      window.testCreateUser = async function () {
+        try {
+          const randomId = Math.floor(Math.random() * 10000);
+          const testEmail = "testworker" + randomId + "@kaamsetu.com";
+          const testPassword = "test123456";
+
+          log("Creating test worker: " + testEmail);
+
+          const user = await registerUser(testEmail, testPassword, {
+            name: "Ramesh Kumar " + randomId,
+            phone: "98765" + String(randomId).padStart(5, "0"),
+            userType: "worker",
+            location: "Mumbai",
+          });
+
+          log("User created in Authentication. UID: " + user.uid);
+
+          log("Creating worker profile...");
+
+          await createWorkerProfile({
+            skills: ["plumbing", "pipe repair", "bathroom fitting"],
+            primarySkill: "Plumber",
+            experience: 5,
+            dailyRate: 800,
+            location: "Mumbai",
+            address: "Andheri East, Mumbai",
+            bio: "Expert plumber with 5 years experience",
+            languages: ["Hindi", "Marathi"],
+            hasOwnTools: true,
+          });
+
+          log("Worker profile created in Firestore!");
+          log("Check your Firebase Console now!");
+          log("Look for 'users' and 'workers' collections.");
+        } catch (error) {
+          log("FAILED: " + error.message);
+        }
+      };
+
+      // TEST 3: Create a Test Employer
+      window.testCreateEmployer = async function () {
+        try {
+          const randomId = Math.floor(Math.random() * 10000);
+          const testEmail = "testemployer" + randomId + "@kaamsetu.com";
+          const testPassword = "test123456";
+
+          log("Creating test employer: " + testEmail);
+
+          const user = await registerUser(testEmail, testPassword, {
+            name: "Sharma Construction " + randomId,
+            phone: "91234" + String(randomId).padStart(5, "0"),
+            userType: "employer",
+            location: "Mumbai",
+          });
+
+          log("User created in Authentication. UID: " + user.uid);
+
+          log("Creating employer profile...");
+
+          await createEmployerProfile({
+            companyName: "Sharma Construction " + randomId,
+            companyType: "Construction",
+            contactPerson: "Amit Sharma",
+            location: "Mumbai",
+            address: "Dadar, Mumbai",
+            bio: "Local construction company",
+          });
+
+          log("Employer profile created in Firestore!");
+          log("Check your Firebase Console now!");
+          log("Look for 'users' and 'employers' collections.");
+        } catch (error) {
+          log("FAILED: " + error.message);
+        }
+      };
+
+      // TEST 4: Read All Data
+      window.testReadData = async function () {
+        try {
+          log("Fetching all users...");
+          const users = await getAllUsers();
+          log("Total users found: " + users.length);
+
+          users.forEach(function (user) {
+            log(
+              "  User: " +
+                user.name +
+                " | Type: " +
+                user.userType +
+                " | Location: " +
+                user.location,
+            );
+          });
+
+          log("Fetching all workers...");
+          const workers = await getAllWorkers();
+          log("Total workers found: " + workers.length);
+
+          workers.forEach(function (worker) {
+            log(
+              "  Worker: " +
+                worker.primarySkill +
+                " | Rate: " +
+                worker.dailyRate +
+                " | Available: " +
+                worker.isAvailable,
+            );
+          });
+
+          log("Fetching all employers...");
+          const employers = await getAllEmployers();
+          log("Total employers found: " + employers.length);
+
+          employers.forEach(function (employer) {
+            log(
+              "  Employer: " +
+                employer.companyName +
+                " | Location: " +
+                employer.location,
+            );
+          });
+
+          log("Data fetch complete!");
+        } catch (error) {
+          log("FAILED: " + error.message);
+        }
+      };
+
+      // Clear Log
+      window.clearLog = function () {
+        document.getElementById("log").textContent = "Log cleared.\n";
+      };
+
+      // Auto-test connection on page load
+      window.testConnection();
+    </script>
+  </body>
+</html>
