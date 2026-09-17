@@ -1,77 +1,62 @@
 // test.js
-import { 
-  createUser, 
-  getUserById, 
-  getAllUsers,
-  getUserByPhone,
-  getUsersByType,
-  updateUser
+import { registerUser } from "./auth.js";
+import {
+  createWorkerProfile,
+  getUserById,
+  getWorkerProfile,
 } from "./database.js";
-import { auth } from "./firebase-config.js";
-import { signInAnonymously } from "firebase/auth";
 
-console.log("🧪 Testing KaamSetu USER System...\n");
+async function runDatabaseTest() {
+  console.log("🚀 Starting KaamSetu Database Test...");
 
-async function runTest() {
-  
-  // Sign in first
-  console.log("Signing in anonymously...");
-  const userCredential = await signInAnonymously(auth);
-  console.log("✅ Signed in:", userCredential.user.uid, "\n");
+  try {
+    // 1. Create a unique email for testing (to avoid "email already in use" errors)
+    const testEmail =
+      "worker_" + Math.floor(Math.random() * 1000) + "@test.com";
+    const password = "password123";
 
-  // TEST 1: Create a WORKER user
-  console.log("Test 1: Creating a WORKER user...");
-  const workerUserId = await createUser({
-    name: "Ramesh Kumar",
-    phone: "9876543210",
-    email: "ramesh@gmail.com",
-    userType: "worker",
-    location: "Mumbai"
-  });
+    const profileData = {
+      name: "Ramesh Kumar",
+      phone: "9876543210",
+      userType: "worker",
+      location: "Mumbai",
+    };
 
-  // TEST 2: Create an EMPLOYER user
-  console.log("\nTest 2: Creating an EMPLOYER user...");
-  const employerUserId = await createUser({
-    name: "Suresh Sharma",
-    phone: "9123456789",
-    email: "suresh@company.com",
-    userType: "employer",
-    location: "Mumbai"
-  });
+    console.log("⏳ Step 1: Registering a new worker user...");
+    const user = await registerUser(testEmail, password, profileData);
+    console.log(
+      "✅ User created in Auth and 'users' collection. UID:",
+      user.uid,
+    );
 
-  // TEST 3: Get user by ID
-  console.log("\nTest 3: Getting worker user by ID...");
-  const workerUser = await getUserById(workerUserId);
-  console.log("Found user:", workerUser);
+    // 2. Create the Worker Profile
+    console.log("⏳ Step 2: Creating the detailed Worker Profile...");
+    const workerData = {
+      skills: ["Plumbing", "Pipe Repair"],
+      primarySkill: "Plumber",
+      experience: 5,
+      dailyRate: 600,
+      location: "Mumbai",
+      bio: "Expert plumber with 5 years experience",
+    };
 
-  // TEST 4: Get user by phone
-  console.log("\nTest 4: Getting user by phone number...");
-  const userByPhone = await getUserByPhone("9876543210");
-  console.log("Found by phone:", userByPhone);
+    const workerId = await createWorkerProfile(workerData);
+    console.log("✅ Worker Profile created in 'workers' collection!");
 
-  // TEST 5: Get all workers (userType = "worker")
-  console.log("\nTest 5: Getting all WORKER type users...");
-  const allWorkerUsers = await getUsersByType("worker");
-  console.log("Total worker users:", allWorkerUsers.length);
+    // 3. Verify data retrieval
+    console.log("⏳ Step 3: Fetching data back from database...");
+    const fetchedUser = await getUserById(user.uid);
+    const fetchedWorker = await getWorkerProfile(user.uid);
 
-  // TEST 6: Get all employers
-  console.log("\nTest 6: Getting all EMPLOYER type users...");
-  const allEmployerUsers = await getUsersByType("employer");
-  console.log("Total employer users:", allEmployerUsers.length);
+    console.log("📋 Data Found for User:", fetchedUser.name);
+    console.log("📋 Skills Found in Profile:", fetchedWorker.skills.join(", "));
 
-  // TEST 7: Update user info
-  console.log("\nTest 7: Updating user's location...");
-  await updateUser(workerUserId, { location: "Delhi" });
-  const updatedUser = await getUserById(workerUserId);
-  console.log("Updated user location:", updatedUser.location);
-
-  // TEST 8: Get all users
-  console.log("\nTest 8: Getting ALL users in database...");
-  const allUsers = await getAllUsers();
-  console.log("Total users in DB:", allUsers.length);
-
-  console.log("\n🎉 All USER tests completed!");
-  process.exit(0);  // Cleanly exit
+    alert("🎉 TEST SUCCESSFUL! Check your Firebase Console now!");
+  } catch (error) {
+    console.error("❌ Test Failed:", error.message);
+    alert("Test Failed: " + error.message);
+  }
 }
 
-runTest();
+// Make the function available globally so we can trigger it
+window.runDatabaseTest = runDatabaseTest;

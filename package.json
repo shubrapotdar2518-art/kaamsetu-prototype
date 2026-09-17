@@ -19,6 +19,6 @@
   },
   "homepage": "https://github.com/shubrapotdar2518-art/kaamsetu-prototype#readme",
   "dependencies": {
-    "firebase": "^12.17.1"
+    "firebase": "^12.19.0"
   }
 }
