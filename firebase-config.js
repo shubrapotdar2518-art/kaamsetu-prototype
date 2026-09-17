@@ -7,12 +7,12 @@ import { getFirestore } from "firebase/firestore";
 
 // 2. PASTE YOUR KEYS HERE (Replace the values below)
 const firebaseConfig = {
-  apiKey: "AIzaSyCsYqKRE3wlkwiZW-Ttpsq8TccU9u4zsOg",
-  authDomain: "kaamsetu-89594.firebaseapp.com",
-  projectId: "kaamsetu-89594",
-  storageBucket: "kaamsetu-89594.firebasestorage.app",
-  messagingSenderId: "566008278150",
-  appId: "1:566008278150:web:0d7f8f0418646cc417b507",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 // 3. Start the engine
