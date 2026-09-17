@@ -1,6 +1,5 @@
-node_modules/
-firebase-config.js
+node_modules
+dist
 .env
 .DS_Store
-Thumbs.db
-package-lock.json
+firebase-debug.log
