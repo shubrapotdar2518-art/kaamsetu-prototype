@@ -6,15 +6,10 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
-  onAuthStateChanged
+  onAuthStateChanged,
 } from "firebase/auth";
 
-import {
-  doc,
-  setDoc,
-  getDoc,
-  serverTimestamp
-} from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
 
 /**
  * Register a new user and create their Firestore profile.
@@ -37,7 +32,7 @@ export async function registerUser(email, password, profileData) {
     const userCredential = await createUserWithEmailAndPassword(
       auth,
       email,
-      password
+      password,
     );
 
     const firebaseUser = userCredential.user;
@@ -51,14 +46,14 @@ export async function registerUser(email, password, profileData) {
       userType: profileData.userType,
       location: profileData.location ?? "",
       isActive: true,
-      createdAt: serverTimestamp()
+      createdAt: serverTimestamp(),
     });
 
     console.log("✅ Registration successful:", firebaseUser.uid);
 
     return {
       uid: firebaseUser.uid,
-      email: firebaseUser.email
+      email: firebaseUser.email,
     };
   } catch (error) {
     console.error("❌ Registration failed:", error.message);
@@ -74,7 +69,7 @@ export async function loginUser(email, password) {
     const userCredential = await signInWithEmailAndPassword(
       auth,
       email,
-      password
+      password,
     );
 
     console.log("✅ Login successful:", userCredential.user.uid);
@@ -110,9 +105,7 @@ export async function getMyProfile() {
       throw new Error("No user is currently logged in.");
     }
 
-    const profileSnapshot = await getDoc(
-      doc(db, "users", currentUser.uid)
-    );
+    const profileSnapshot = await getDoc(doc(db, "users", currentUser.uid));
 
     if (!profileSnapshot.exists()) {
       return null;
@@ -120,7 +113,7 @@ export async function getMyProfile() {
 
     return {
       id: profileSnapshot.id,
-      ...profileSnapshot.data()
+      ...profileSnapshot.data(),
     };
   } catch (error) {
     console.error("❌ Could not get profile:", error.message);
@@ -138,4 +131,34 @@ export function waitForAuthState() {
       resolve(user);
     });
   });
+}
+
+/**
+ * Create the Firestore profile for an ALREADY-created Firebase Auth user.
+ * Used when account creation and role selection happen on different screens.
+ */
+export async function createUserProfile(uid, profileData) {
+  try {
+    if (!["worker", "employer"].includes(profileData.userType)) {
+      throw new Error("User type must be worker or employer.");
+    }
+
+    await setDoc(doc(db, "users", uid), {
+      userId: uid,
+      email: profileData.email ?? "",
+      name: profileData.name,
+      phone: profileData.phone ?? "",
+      userType: profileData.userType,
+      location: profileData.location ?? "",
+      isActive: true,
+      createdAt: serverTimestamp(),
+    });
+
+    console.log("✅ Profile created for:", uid);
+
+    return { uid };
+  } catch (error) {
+    console.error("❌ Profile creation failed:", error.message);
+    throw error;
+  }
 }
