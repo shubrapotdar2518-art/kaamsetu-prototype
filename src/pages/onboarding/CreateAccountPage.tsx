@@ -1,70 +1,96 @@
-import React, { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Eye, EyeOff, Lock, User, Mail, Phone, ShieldCheck } from 'lucide-react';
-import { KaamSetuLogo } from '../../components/KaamSetuLogo';
-import { LanguageSwitcher } from '../../components/LanguageSwitcher';
-import { useLanguage } from '../../i18n/LanguageContext';
-import { useApp } from '../../context/AppContext';
+import React, { useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Eye,
+  EyeOff,
+  Lock,
+  User,
+  Mail,
+  Phone,
+} from "lucide-react";
+import { KaamSetuLogo } from "../../components/KaamSetuLogo";
+import { LanguageSwitcher } from "../../components/LanguageSwitcher";
+import { useLanguage } from "../../i18n/LanguageContext";
+import { useApp } from "../../context/AppContext";
+import { getFriendlyAuthError } from "../../services/authService";
 
 export const CreateAccountPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useLanguage();
-  const { userProfile, updateUserProfile, showToast } = useApp();
+  const { userProfile, updateUserProfile, showToast, registerAccount } =
+    useApp();
 
-  const isEmailMode = location.state?.method !== 'mobile';
+  const isEmailMode = location.state?.method !== "mobile";
 
-  const [fullName, setFullName] = useState(userProfile.name || '');
-  const [email, setEmail] = useState(userProfile.email || '');
-  const [phone, setPhone] = useState(userProfile.phone || '');
-  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState(userProfile.name || "");
+  const [email, setEmail] = useState(userProfile.email || "");
+  const [phone, setPhone] = useState(userProfile.phone || "");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [agreeTerms, setAgreeTerms] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError("");
+
     if (!fullName.trim()) {
-      setError('Please enter your full name');
+      setError("Please enter your full name");
       return;
     }
     if (isEmailMode) {
-      if (!email.trim() || !email.includes('@')) {
-        setError('Please enter a valid email address');
+      if (!email.trim() || !email.includes("@")) {
+        setError("Please enter a valid email address");
         return;
       }
     } else {
       if (!phone.trim() || phone.trim().length < 10) {
-        setError('Please enter a valid 10-digit mobile number');
+        setError("Please enter a valid 10-digit mobile number");
         return;
       }
     }
-    if (!password.trim() || password.length < 4) {
-      setError('Please enter a password with at least 4 characters');
+    if (!password.trim() || password.length < 6) {
+      setError("Password must be at least 6 characters long");
       return;
     }
     if (!agreeTerms) {
-      setError('Please agree to the Terms & Conditions');
+      setError("Please agree to the Terms & Conditions");
       return;
     }
 
     if (isEmailMode) {
-      updateUserProfile({
-        name: fullName.trim(),
-        email: email.trim(),
-        phone: '',
-      });
-      showToast('Verification code sent to your email address!');
+      setIsSubmitting(true);
+      try {
+        // Creates a REAL Firebase Authentication account
+        await registerAccount(email.trim(), password);
+
+        updateUserProfile({
+          name: fullName.trim(),
+          email: email.trim(),
+          phone: "",
+        });
+
+        showToast("Account created successfully!");
+        navigate("/verify-otp", { state: { method: "email" } });
+      } catch (err) {
+        setError(getFriendlyAuthError(err));
+      } finally {
+        setIsSubmitting(false);
+      }
     } else {
+      // Mobile/OTP signup remains a UI placeholder (future scope)
       updateUserProfile({
         name: fullName.trim(),
         phone: phone.trim(),
-        email: '',
+        email: "",
       });
-      showToast('OTP sent to your mobile number!');
+      showToast("OTP sent to your mobile number!");
+      navigate("/verify-otp", { state: { method: "mobile" } });
     }
-
-    navigate('/verify-otp', { state: { method: isEmailMode ? 'email' : 'mobile' } });
   };
 
   return (
@@ -76,11 +102,11 @@ export const CreateAccountPage: React.FC = () => {
           <LanguageSwitcher variant="dropdown" />
           <button
             type="button"
-            onClick={() => navigate('/signup-options')}
+            onClick={() => navigate("/signup-options")}
             className="flex items-center gap-1 text-xs font-bold text-gray-500 hover:text-gray-900 transition-colors ml-2"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>{t('back', 'Back')}</span>
+            <span>{t("back", "Back")}</span>
           </button>
         </div>
       </header>
@@ -90,12 +116,12 @@ export const CreateAccountPage: React.FC = () => {
         <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm">
           <div className="text-center mb-6">
             <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
-              {t('createAccount', 'Create Account')}
+              {t("createAccount", "Create Account")}
             </h1>
             <p className="text-xs sm:text-sm text-gray-500 mt-1">
               {isEmailMode
-                ? 'Sign up with your email address for instant verification'
-                : 'Sign up with your mobile number for quick SMS OTP'}
+                ? "Sign up with your email address for instant verification"
+                : "Sign up with your mobile number for quick SMS OTP"}
             </p>
           </div>
 
@@ -109,7 +135,8 @@ export const CreateAccountPage: React.FC = () => {
             {/* Full Name */}
             <div>
               <label className="block text-xs font-bold text-gray-700 mb-1.5">
-                {t('fullName', 'Full Name')} <span className="text-rose-500">*</span>
+                {t("fullName", "Full Name")}{" "}
+                <span className="text-rose-500">*</span>
               </label>
               <div className="relative">
                 <User className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -119,9 +146,9 @@ export const CreateAccountPage: React.FC = () => {
                   value={fullName}
                   onChange={(e) => {
                     setFullName(e.target.value);
-                    setError('');
+                    setError("");
                   }}
-                  placeholder={t('fullNamePlaceholder', 'e.g. Ravi Kumar')}
+                  placeholder={t("fullNamePlaceholder", "e.g. Ravi Kumar")}
                   className="w-full pl-10 pr-4 py-3 rounded-2xl bg-gray-50/70 border border-gray-200 text-sm text-gray-800 placeholder:text-gray-400 focus:bg-white focus:border-[#15803D] focus:ring-1 focus:ring-[#15803D] outline-none transition-all"
                 />
               </div>
@@ -131,7 +158,8 @@ export const CreateAccountPage: React.FC = () => {
             {isEmailMode && (
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1.5">
-                  {t('email', 'Email Address')} <span className="text-rose-500">*</span>
+                  {t("email", "Email Address")}{" "}
+                  <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -141,9 +169,12 @@ export const CreateAccountPage: React.FC = () => {
                     value={email}
                     onChange={(e) => {
                       setEmail(e.target.value);
-                      setError('');
+                      setError("");
                     }}
-                    placeholder={t('emailPlaceholder', 'e.g. ravi.kumar@example.com')}
+                    placeholder={t(
+                      "emailPlaceholder",
+                      "e.g. ravi.kumar@example.com",
+                    )}
                     className="w-full pl-10 pr-4 py-3 rounded-2xl bg-gray-50/70 border border-gray-200 text-sm text-gray-800 placeholder:text-gray-400 focus:bg-white focus:border-[#15803D] focus:ring-1 focus:ring-[#15803D] outline-none transition-all"
                   />
                 </div>
@@ -154,7 +185,8 @@ export const CreateAccountPage: React.FC = () => {
             {!isEmailMode && (
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1.5">
-                  {t('mobileNumber', 'Mobile Number')} <span className="text-rose-500">*</span>
+                  {t("mobileNumber", "Mobile Number")}{" "}
+                  <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative flex">
                   <span className="inline-flex items-center px-3 rounded-l-2xl border border-r-0 border-gray-200 bg-gray-100 text-xs font-bold text-gray-600">
@@ -166,10 +198,13 @@ export const CreateAccountPage: React.FC = () => {
                     maxLength={10}
                     value={phone}
                     onChange={(e) => {
-                      setPhone(e.target.value.replace(/\D/g, ''));
-                      setError('');
+                      setPhone(e.target.value.replace(/\D/g, ""));
+                      setError("");
                     }}
-                    placeholder={t('mobileNumberPlaceholder', 'e.g. 9876543210')}
+                    placeholder={t(
+                      "mobileNumberPlaceholder",
+                      "e.g. 9876543210",
+                    )}
                     className="w-full pl-3 pr-4 py-3 rounded-r-2xl bg-gray-50/70 border border-gray-200 text-sm text-gray-800 placeholder:text-gray-400 focus:bg-white focus:border-[#15803D] focus:ring-1 focus:ring-[#15803D] outline-none transition-all"
                   />
                 </div>
@@ -180,7 +215,8 @@ export const CreateAccountPage: React.FC = () => {
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-bold text-gray-700">
-                  {t('password', 'Password')} <span className="text-rose-500">*</span>
+                  {t("password", "Password")}{" "}
+                  <span className="text-rose-500">*</span>
                 </label>
                 <button
                   type="button"
@@ -190,12 +226,12 @@ export const CreateAccountPage: React.FC = () => {
                   {showPassword ? (
                     <>
                       <EyeOff className="w-3.5 h-3.5" />
-                      <span>{t('hidePassword', 'Hide')}</span>
+                      <span>{t("hidePassword", "Hide")}</span>
                     </>
                   ) : (
                     <>
                       <Eye className="w-3.5 h-3.5" />
-                      <span>{t('showPassword', 'Show')}</span>
+                      <span>{t("showPassword", "Show")}</span>
                     </>
                   )}
                 </button>
@@ -203,11 +239,14 @@ export const CreateAccountPage: React.FC = () => {
               <div className="relative">
                 <Lock className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
-                  type={showPassword ? 'text' : 'password'}
+                  type={showPassword ? "text" : "password"}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder={t('passwordPlaceholder', 'Enter your password')}
+                  placeholder={t(
+                    "passwordPlaceholder",
+                    "Enter your password (min. 6 characters)",
+                  )}
                   className="w-full pl-10 pr-10 py-3 rounded-2xl bg-gray-50/70 border border-gray-200 text-sm text-gray-800 placeholder:text-gray-400 focus:bg-white focus:border-[#15803D] focus:ring-1 focus:ring-[#15803D] outline-none transition-all"
                 />
               </div>
@@ -223,7 +262,10 @@ export const CreateAccountPage: React.FC = () => {
                   className="w-4 h-4 mt-0.5 rounded text-[#15803D] focus:ring-[#15803D] border-gray-300"
                 />
                 <span className="text-xs text-gray-600 leading-snug">
-                  {t('termsAndConditions', 'I agree to the Terms & Conditions and Privacy Policy of KaamSetu')}
+                  {t(
+                    "termsAndConditions",
+                    "I agree to the Terms & Conditions and Privacy Policy of KaamSetu",
+                  )}
                 </span>
               </label>
             </div>
@@ -231,10 +273,15 @@ export const CreateAccountPage: React.FC = () => {
             {/* Submit Button */}
             <button
               type="submit"
-              className="w-full mt-4 py-3.5 px-6 rounded-2xl bg-[#15803D] hover:bg-[#166534] active:scale-[0.99] text-white font-bold text-base shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+              disabled={isSubmitting}
+              className="w-full mt-4 py-3.5 px-6 rounded-2xl bg-[#15803D] hover:bg-[#166534] disabled:bg-gray-400 active:scale-[0.99] text-white font-bold text-base shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
-              <span>{t('continue', 'Continue')}</span>
-              <ArrowRight className="w-4 h-4" />
+              <span>
+                {isSubmitting
+                  ? "Creating Account..."
+                  : t("continue", "Continue")}
+              </span>
+              {!isSubmitting && <ArrowRight className="w-4 h-4" />}
             </button>
           </form>
         </div>
