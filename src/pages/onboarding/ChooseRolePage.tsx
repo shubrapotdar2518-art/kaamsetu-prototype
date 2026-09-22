@@ -43,12 +43,15 @@ export const ChooseRolePage: React.FC = () => {
 
     try {
       if (userProfile.uid) {
-        await createUserProfile(userProfile.uid, {
+               await createUserProfile(userProfile.uid, {
           name: userProfile.name,
           email: userProfile.email,
           phone: userProfile.phone,
           userType: 'employer',
           location: userProfile.city,
+          address: userProfile.address,
+          landmark: userProfile.landmark,
+          pincode: userProfile.pincode,
         });
       }
     } catch (error) {
