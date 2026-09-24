@@ -1,4 +1,10 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from "react";
 import type { User } from "firebase/auth";
 import {
   registerWithEmail,
@@ -10,6 +16,22 @@ import {
   createUserProfile,
   getUserProfile,
 } from "../services/firestoreProfile";
+import {
+  createWorkerProfileDoc,
+  createEmployerProfileDoc,
+  getWorkerProfileDoc,
+} from "../services/profileService";
+import {
+  postJobDoc,
+  fetchOpenJobs,
+  fetchEmployerJobs,
+  applyToJobDoc,
+  fetchMyAppliedJobIds,
+  fetchEmployerApplications,
+  updateApplicationStatusDoc,
+  type FirestoreJob,
+} from "../services/jobService";
+import { computeMatchScore } from "../algorithms/recommendation";
 
 export interface JobItem {
   id: string;
@@ -89,7 +111,7 @@ interface AppContextType {
   userProfile: UserProfile;
   updateUserProfile: (updates: Partial<UserProfile>) => void;
   jobs: JobItem[];
-  applyToJob: (jobId: string) => void;
+  applyToJob: (jobId: string) => Promise<void>;
   employerJobPosts: EmployerJobPost[];
   addEmployerJobPost: (
     post: Omit<EmployerJobPost, "id" | "applicationsCount" | "postedDate">,
@@ -102,12 +124,13 @@ interface AppContextType {
     openings?: number;
     duration?: string;
     description?: string;
-  }) => void;
+    urgency?: "normal" | "emergency";
+  }) => Promise<void>;
   applications: JobApplication[];
   updateApplicationStatus: (
     id: string,
     status: JobApplication["status"],
-  ) => void;
+  ) => Promise<void>;
   chatMessages: ChatMessage[];
   sendChatMessage: (text: string) => void;
   toast: { message: string; type: "success" | "info" | "error" } | null;
@@ -115,13 +138,21 @@ interface AppContextType {
   clearToast: () => void;
   selectedPhotos: string[];
   setSelectedPhotos: React.Dispatch<React.SetStateAction<string[]>>;
-
-  // ===== NEW: Real Firebase authentication =====
   authLoading: boolean;
   registerAccount: (email: string, password: string) => Promise<void>;
-  loginAccount: (email: string, password: string) => Promise<void>;
+  loginAccount: (
+    email: string,
+    password: string,
+  ) => Promise<"worker" | "employer">;
   logoutAccount: () => Promise<void>;
   chooseRoleAndSave: (role: "worker" | "employer") => Promise<void>;
+  saveWorkerProfile: (data: {
+    skills: string;
+    experience: string;
+    additionalSkills: string;
+    dailyWage: string;
+  }) => Promise<void>;
+  refreshJobs: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -141,7 +172,7 @@ const INITIAL_JOBS: JobItem[] = [
     postedTime: "2 hours ago",
     employerName: "Sharma Interior Solutions",
     description:
-      "Need skilled carpenter for modular kitchen fitting and wardrobe door alignment. Full day work, lunch provided.",
+      "Need skilled carpenter for modular kitchen fitting and wardrobe door alignment.",
     workersNeeded: 2,
   },
   {
@@ -158,7 +189,7 @@ const INITIAL_JOBS: JobItem[] = [
     postedTime: "4 hours ago",
     employerName: "Apex Woodcraft Ltd",
     description:
-      "Assembly of flat-pack office furniture and conference tables. Tools will be provided on site.",
+      "Assembly of flat-pack office furniture and conference tables.",
     workersNeeded: 3,
   },
   {
@@ -174,7 +205,7 @@ const INITIAL_JOBS: JobItem[] = [
     postedTime: "30 mins ago",
     employerName: "Bright Power Electricals",
     description:
-      "Assist master electrician with conduit wiring and switchboard installation in a residential complex.",
+      "Assist master electrician with conduit wiring and switchboard installation.",
     workersNeeded: 2,
   },
   {
@@ -190,7 +221,7 @@ const INITIAL_JOBS: JobItem[] = [
     postedTime: "1 hour ago",
     employerName: "Skyline Renovations",
     description:
-      "Exterior weather-coat painting for 4-storey commercial building. Safety harnesses provided.",
+      "Exterior weather-coat painting for 4-storey commercial building.",
     workersNeeded: 4,
   },
   {
@@ -206,7 +237,7 @@ const INITIAL_JOBS: JobItem[] = [
     postedTime: "Just now",
     employerName: "Amit Enterprises",
     description:
-      "Urgent helper needed for material unloading and concrete mixing assistance. Immediate cash payout at 6 PM.",
+      "Urgent helper needed for material unloading and concrete mixing.",
     workersNeeded: 5,
   },
 ];
@@ -299,12 +330,41 @@ const INITIAL_EMPLOYER_POSTS: EmployerJobPost[] = [
   },
 ];
 
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+const timeAgo = (seconds?: number | null): string => {
+  if (!seconds) return "Just now";
+  const m = Math.floor((Date.now() / 1000 - seconds) / 60);
+  if (m < 1) return "Just now";
+  if (m < 60) return `${m} mins ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hours ago`;
+  return `${Math.floor(h / 24)} days ago`;
+};
+
+const statusToUi = (s: string): JobApplication["status"] => {
+  if (s === "accepted") return "Shortlisted";
+  if (s === "in_progress" || s === "completed") return "Hired";
+  if (s === "rejected") return "Rejected";
+  return "New";
+};
+
+const uiToStatus = (s: JobApplication["status"]): string => {
+  if (s === "Shortlisted") return "accepted";
+  if (s === "Hired") return "in_progress";
+  if (s === "Rejected") return "rejected";
+  return "pending";
+};
+
+// ─── Provider ─────────────────────────────────────────────────────────────────
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const [userRole, setUserRole] = useState<"worker" | "employer">("worker");
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
+  const [workerDoc, setWorkerDoc] = useState<Record<string, any> | null>(null);
 
   const [userProfile, setUserProfile] = useState<UserProfile>({
     uid: undefined,
@@ -333,7 +393,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   );
   const [applications, setApplications] =
     useState<JobApplication[]>(INITIAL_APPLICATIONS);
-
   const [toast, setToast] = useState<{
     message: string;
     type: "success" | "info" | "error";
@@ -344,90 +403,200 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     type: "success" | "info" | "error" = "success",
   ) => {
     setToast({ message, type });
-    setTimeout(() => {
-      setToast(null);
-    }, 4000);
+    setTimeout(() => setToast(null), 4000);
   };
 
   const clearToast = () => setToast(null);
 
-  const updateUserProfile = (updates: Partial<UserProfile>) => {
+  const updateUserProfile = (updates: Partial<UserProfile>) =>
     setUserProfile((prev) => ({ ...prev, ...updates }));
-  };
 
-  // ===== NEW: Restore login session on page refresh =====
-  useEffect(() => {
-    const unsubscribe = subscribeToAuthChanges(
-      async (firebaseUser: User | null) => {
-        if (firebaseUser) {
-          try {
-            const profile = await getUserProfile(firebaseUser.uid);
+  // ─── Load real data from Firestore (falls back to sample data if DB is empty) ───
 
-            if (profile) {
-              setUserProfile((prev) => ({
-                ...prev,
-                uid: firebaseUser.uid,
-                name: (profile as any).name ?? prev.name,
-                email: (profile as any).email ?? prev.email,
-                phone: (profile as any).phone ?? prev.phone,
-                city: (profile as any).location ?? prev.city,
-              }));
+  const refreshJobs = useCallback(async () => {
+    const uid = userProfile.uid;
+    if (!uid) return;
 
-              const savedRole = (profile as any).userType;
-              if (savedRole === "worker" || savedRole === "employer") {
-                setUserRole(savedRole);
-              }
-            } else {
-              setUserProfile((prev) => ({ ...prev, uid: firebaseUser.uid }));
-            }
-          } catch (error) {
-            console.error("Error restoring session:", error);
-          }
+    try {
+      if (userRole === "worker") {
+        const [open, appliedIds] = await Promise.all([
+          fetchOpenJobs(),
+          fetchMyAppliedJobIds(uid),
+        ]);
+
+        // Keep demo data if database is empty — good for presentation
+        if (open.length === 0) return;
+
+        const w = workerDoc;
+        const mapped: JobItem[] = open.map((j: FirestoreJob) => {
+          const match = w
+            ? computeMatchScore(
+                {
+                  primarySkill: w.primarySkill ?? "",
+                  skills: w.skills ?? [],
+                  location: w.location ?? "",
+                  isAvailable: w.isAvailable ?? true,
+                  rating: w.rating ?? 0,
+                  totalJobs: w.totalJobs ?? 0,
+                },
+                { trade: j.trade, location: j.location, urgency: j.urgency },
+              )
+            : undefined;
+
+          return {
+            id: j.id,
+            titleKey: "customJob",
+            defaultTitle: j.title,
+            category: j.trade,
+            wage: j.wage,
+            wageUnit: "dayWageUnit",
+            location: j.location,
+            distance: j.location,
+            matchPercentage: match,
+            badge:
+              j.urgency === "emergency"
+                ? "Urgent"
+                : match && match >= 75
+                  ? "Match"
+                  : "New",
+            postedTime: timeAgo(j.postedAt?.seconds),
+            employerName: j.employerName,
+            applied: appliedIds.includes(j.id),
+            description: j.description,
+            workersNeeded: j.openings,
+          };
+        });
+
+        // Show highest match first
+        mapped.sort(
+          (a, b) => (b.matchPercentage ?? 0) - (a.matchPercentage ?? 0),
+        );
+        setJobs(mapped);
+      } else {
+        // Employer: load their jobs and applications
+        const [mine, apps] = await Promise.all([
+          fetchEmployerJobs(uid),
+          fetchEmployerApplications(uid),
+        ]);
+
+        if (mine.length > 0) {
+          setEmployerJobPosts(
+            mine.map((j) => ({
+              id: j.id,
+              title: j.title,
+              trade: j.trade,
+              location: j.location,
+              wage: j.wage,
+              applicationsCount: apps.filter((a) => a.jobId === j.id).length,
+              status:
+                j.urgency === "emergency"
+                  ? "Urgent"
+                  : j.status === "open"
+                    ? "Active"
+                    : "Filled",
+              postedDate: timeAgo(j.postedAt?.seconds),
+            })),
+          );
         }
-        setAuthLoading(false);
-      },
-    );
 
-    return () => unsubscribe();
-  }, []);
+        if (apps.length > 0) {
+          setApplications(
+            apps.map((a) => ({
+              id: a.id,
+              workerName: a.workerName,
+              trade: a.workerTrade,
+              experience: `${a.workerExperience} Years Experience`,
+              location: a.workerLocation,
+              phone: a.workerPhone,
+              rating: 0,
+              status: statusToUi(a.status),
+              appliedFor: a.jobTitle,
+              appliedDate: timeAgo(a.appliedAt?.seconds),
+              avatar: "",
+            })),
+          );
+        }
+      }
+    } catch (err) {
+      console.error("refreshJobs failed:", err);
+    }
+  }, [userProfile.uid, userRole, workerDoc]);
 
-  // ===== NEW: Create real Firebase account =====
-  const registerAccount = async (email: string, password: string) => {
-    const firebaseUser = await registerWithEmail(email, password);
-    setUserProfile((prev) => ({ ...prev, uid: firebaseUser.uid, email }));
-  };
+  useEffect(() => {
+    refreshJobs();
+  }, [refreshJobs]);
 
-  // ===== NEW: Login with real Firebase account =====
-  const loginAccount = async (email: string, password: string) => {
-    const firebaseUser = await loginWithEmail(email, password);
-    const profile = await getUserProfile(firebaseUser.uid);
+  // ─── Restore session on page refresh ─────────────────────────────────────
+
+  const applyFirestoreUser = async (
+    firebaseUser: User,
+  ): Promise<"worker" | "employer"> => {
+    const profile = (await getUserProfile(firebaseUser.uid)) as any;
 
     setUserProfile((prev) => ({
       ...prev,
       uid: firebaseUser.uid,
-      name: (profile as any)?.name ?? prev.name,
-      email: (profile as any)?.email ?? email,
-      phone: (profile as any)?.phone ?? prev.phone,
-      city: (profile as any)?.location ?? prev.city,
+      name: profile?.name ?? prev.name,
+      email: profile?.email ?? firebaseUser.email ?? prev.email,
+      phone: profile?.phone ?? prev.phone,
+      city: profile?.location ?? prev.city,
     }));
 
-    const savedRole = (profile as any)?.userType;
-    if (savedRole === "worker" || savedRole === "employer") {
-      setUserRole(savedRole);
+    const role: string = profile?.userType ?? "";
+
+    if (role === "worker" || role === "employer") {
+      setUserRole(role as "worker" | "employer");
+      if (role === "worker") {
+        const wd = await getWorkerProfileDoc(firebaseUser.uid);
+        setWorkerDoc(wd);
+      }
+      return role as "worker" | "employer";
     }
+
+    return "worker";
   };
 
-  // ===== NEW: Logout =====
+  useEffect(() => {
+    const unsub = subscribeToAuthChanges(async (u) => {
+      if (u) {
+        try {
+          await applyFirestoreUser(u);
+        } catch (e) {
+          console.error("Session restore error:", e);
+        }
+      }
+      setAuthLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  // ─── Auth functions ───────────────────────────────────────────────────────
+
+  const registerAccount = async (email: string, password: string) => {
+    const u = await registerWithEmail(email, password);
+    setUserProfile((prev) => ({ ...prev, uid: u.uid, email }));
+  };
+
+  const loginAccount = async (
+    email: string,
+    password: string,
+  ): Promise<"worker" | "employer"> => {
+    const u = await loginWithEmail(email, password);
+    return applyFirestoreUser(u);
+  };
+
   const logoutAccount = async () => {
     await logout();
     setUserProfile((prev) => ({ ...prev, uid: undefined }));
+    setWorkerDoc(null);
+    // Restore demo data so app still looks complete after logout
+    setJobs(INITIAL_JOBS);
+    setEmployerJobPosts(INITIAL_EMPLOYER_POSTS);
+    setApplications(INITIAL_APPLICATIONS);
   };
 
-  // ===== NEW: Save role + create Firestore users/{uid} document =====
   const chooseRoleAndSave = async (role: "worker" | "employer") => {
-    if (!userProfile.uid) {
-      throw new Error("Please sign up with email first.");
-    }
+    if (!userProfile.uid) throw new Error("Please sign up with email first.");
 
     await createUserProfile(userProfile.uid, {
       name: userProfile.name,
@@ -437,34 +606,82 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       location: userProfile.city,
     });
 
+    if (role === "employer") {
+      await createEmployerProfileDoc(userProfile.uid, {
+        companyName: userProfile.companyName || userProfile.name,
+        contactPerson: userProfile.name,
+        location: userProfile.city,
+        address: userProfile.address,
+      });
+    }
+
     setUserRole(role);
   };
 
-  const applyToJob = (jobId: string) => {
-    setJobs((prev) =>
-      prev.map((job) => (job.id === jobId ? { ...job, applied: true } : job)),
-    );
-    showToast(
-      "Applied successfully! Employer has received your verified profile.",
-    );
+  const saveWorkerProfile = async (data: {
+    skills: string;
+    experience: string;
+    additionalSkills: string;
+    dailyWage: string;
+  }) => {
+    if (!userProfile.uid) throw new Error("Please login first.");
+
+    const extra = data.additionalSkills
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    await createWorkerProfileDoc(userProfile.uid, {
+      primarySkill: data.skills,
+      skills: [data.skills, ...extra],
+      experience: Number(data.experience) || 0,
+      dailyRate: Number(data.dailyWage) || 0,
+      location: userProfile.city,
+      address: userProfile.address,
+    });
+
+    const wd = await getWorkerProfileDoc(userProfile.uid);
+    setWorkerDoc(wd);
+    updateUserProfile(data);
   };
 
-  const addEmployerJobPost = (
-    post: Omit<EmployerJobPost, "id" | "applicationsCount" | "postedDate">,
-  ) => {
-    const newPost: EmployerJobPost = {
-      ...post,
-      id: `ep-${Date.now()}`,
-      applicationsCount: 0,
-      postedDate: "Just now",
-    };
-    setEmployerJobPosts((prev) => [newPost, ...prev]);
-    showToast(
-      "Job requirement posted! Instant SMS sent to 18 verified nearby workers.",
-    );
+  // ─── Job actions ──────────────────────────────────────────────────────────
+
+  const applyToJob = async (jobId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!userProfile.uid || !job) return;
+
+    try {
+      // If it starts with 'job-' it is a demo job (not in Firestore)
+      if (jobId.startsWith("job-")) {
+        setJobs((prev) =>
+          prev.map((j) => (j.id === jobId ? { ...j, applied: true } : j)),
+        );
+        showToast("Applied successfully!");
+        return;
+      }
+
+      // Real job — check employer id from Firestore
+      const open = await fetchOpenJobs();
+      const fj = open.find((j) => j.id === jobId);
+      if (!fj) throw new Error("Job no longer available.");
+
+      await applyToJobDoc(jobId, userProfile.uid, fj.employerId, fj.title);
+      setJobs((prev) =>
+        prev.map((j) => (j.id === jobId ? { ...j, applied: true } : j)),
+      );
+      showToast(
+        "Applied successfully! Employer has received your verified profile.",
+      );
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Could not apply.",
+        "error",
+      );
+    }
   };
 
-  const addJobPost = (post: {
+  const addJobPost = async (post: {
     title: string;
     trade: string;
     location: string;
@@ -472,49 +689,69 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     openings?: number;
     duration?: string;
     description?: string;
+    urgency?: "normal" | "emergency";
   }) => {
-    const newPost: EmployerJobPost = {
-      id: `ep-${Date.now()}`,
+    if (!userProfile.uid) {
+      showToast("Please login first.", "error");
+      return;
+    }
+
+    try {
+      await postJobDoc({
+        employerId: userProfile.uid,
+        employerName:
+          userProfile.companyName || userProfile.name || "Verified Employer",
+        title: post.title,
+        trade: post.trade,
+        location: post.location,
+        wage: post.wage,
+        openings: post.openings ?? 1,
+        duration: post.duration ?? "",
+        description: post.description ?? "",
+        urgency: post.urgency ?? "normal",
+      });
+
+      showToast("Job posted successfully! Broadcasted to local workers.");
+      await refreshJobs();
+    } catch (err) {
+      console.error("addJobPost error:", err);
+      showToast("Failed to post job. Please try again.", "error");
+    }
+  };
+
+  const addEmployerJobPost = (
+    post: Omit<EmployerJobPost, "id" | "applicationsCount" | "postedDate">,
+  ) => {
+    addJobPost({
       title: post.title,
       trade: post.trade,
       location: post.location,
       wage: post.wage,
-      applicationsCount: 0,
-      status: "Active",
-      postedDate: "Just now",
-    };
-    setEmployerJobPosts((prev) => [newPost, ...prev]);
-
-    const newJobItem: JobItem = {
-      id: `job-${Date.now()}`,
-      titleKey: "customJob",
-      defaultTitle: post.title,
-      category: post.trade,
-      wage: post.wage,
-      wageUnit: "dayWageUnit",
-      location: post.location,
-      distance: "0.8 km away",
-      badge: "New",
-      postedTime: "Just now",
-      employerName:
-        userProfile.name || userProfile.companyName || "Verified Employer",
-      description:
-        post.description || "Direct requirement posted by verified employer.",
-      workersNeeded: post.openings || 1,
-    };
-    setJobs((prev) => [newJobItem, ...prev]);
-    showToast("Job posted successfully! Broadcasted to local workers.");
+      urgency: post.status === "Urgent" ? "emergency" : "normal",
+    });
   };
 
-  const updateApplicationStatus = (
+  const updateApplicationStatus = async (
     id: string,
     status: JobApplication["status"],
   ) => {
     setApplications((prev) =>
-      prev.map((app) => (app.id === id ? { ...app, status } : app)),
+      prev.map((a) => (a.id === id ? { ...a, status } : a)),
     );
+
+    // Real Firestore application IDs contain an underscore (jobId_workerId)
+    if (id.includes("_")) {
+      try {
+        await updateApplicationStatusDoc(id, uiToStatus(status));
+      } catch (e) {
+        console.error("updateApplicationStatus error:", e);
+      }
+    }
+
     showToast(`Worker status updated to ${status}`);
   };
+
+  // ─── Chatbot ──────────────────────────────────────────────────────────────
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -531,51 +768,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   ]);
 
   const sendChatMessage = (text: string) => {
-    const userMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      sender: "user",
-      text,
-      time: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    };
+    const now = () =>
+      new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-    setChatMessages((prev) => [...prev, userMsg]);
+    setChatMessages((prev) => [
+      ...prev,
+      { id: `msg-${Date.now()}`, sender: "user", text, time: now() },
+    ]);
 
     setTimeout(() => {
-      let botResponse =
-        "I am checking available options for you on KaamSetu. You have 5 high-paying daily jobs nearby!";
       const lower = text.toLowerCase();
+      let reply =
+        "I am checking available options for you on KaamSetu. You have 5 high-paying daily jobs nearby!";
 
       if (lower.includes("job") || lower.includes("work")) {
-        botResponse =
-          "Here are the top matches for you in Andheri & Bandra:\n1. Carpenter for Home Work (₹850/day - 1.2km)\n2. Furniture Installation & Fitting (₹900/day - 3.5km)\nWould you like me to apply on your behalf?";
+        const top = jobs
+          .slice(0, 2)
+          .map(
+            (j, i) =>
+              `${i + 1}. ${j.defaultTitle} (₹${j.wage}/day - ${j.location})`,
+          )
+          .join("\n");
+        reply = `Here are your top matches:\n${top}\nOpen Recommended Jobs tab to apply.`;
       } else if (lower.includes("paid") || lower.includes("payment")) {
-        botResponse =
-          "With KaamSetu Guaranteed Payouts, employers release daily wages via UPI/Direct Bank Transfer or Cash upon job completion before 7:00 PM. No middlemen fees!";
+        reply =
+          "Employers release daily wages via UPI, bank transfer, or cash after job completion. No middlemen fees!";
       } else if (
         lower.includes("scheme") ||
         lower.includes("welfare") ||
         lower.includes("insurance")
       ) {
-        botResponse =
-          "You are eligible for Ayushman Shramik Health Cover (₹5 Lakhs free hospitalization) and PMSYM Pension (₹3,000/month after age 60). Check the Welfare Schemes tab to apply in 1-click!";
+        reply =
+          "Check the Welfare Schemes tab for E-Shram, PM Shram Yogi Maandhan, and Ayushman Bharat eligibility details.";
       }
 
-      const botMsg: ChatMessage = {
-        id: `msg-${Date.now() + 1}`,
-        sender: "bot",
-        text: botResponse,
-        time: new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-      };
-
-      setChatMessages((prev) => [...prev, botMsg]);
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `msg-${Date.now() + 1}`,
+          sender: "bot",
+          text: reply,
+          time: now(),
+        },
+      ]);
     }, 600);
   };
+
+  // ─── Provider value ───────────────────────────────────────────────────────
 
   return (
     <AppContext.Provider
@@ -603,6 +842,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         loginAccount,
         logoutAccount,
         chooseRoleAndSave,
+        saveWorkerProfile,
+        refreshJobs,
       }}
     >
       {children}
