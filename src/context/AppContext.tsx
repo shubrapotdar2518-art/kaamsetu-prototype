@@ -31,6 +31,7 @@ import {
   updateApplicationStatusDoc,
   type FirestoreJob,
 } from "../services/jobService";
+import { findBestFAQAnswer } from "../services/faqService";
 import { computeMatchScore } from "../algorithms/recommendation";
 
 export interface JobItem {
@@ -767,7 +768,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     },
   ]);
 
-  const sendChatMessage = (text: string) => {
+  const sendChatMessage = async (text: string) => {
     const now = () =>
       new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -776,9 +777,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       { id: `msg-${Date.now()}`, sender: "user", text, time: now() },
     ]);
 
-    setTimeout(() => {
+    // 1. Try to find a real matching answer from Firestore FAQs first
+    let reply: string | null = null;
+    try {
+      reply = await findBestFAQAnswer(text);
+    } catch (err) {
+      console.error("FAQ lookup failed:", err);
+    }
+
+    // 2. If no FAQ matched well enough, fall back to simple keyword replies
+    if (!reply) {
       const lower = text.toLowerCase();
-      let reply =
+      reply =
         "I am checking available options for you on KaamSetu. You have 5 high-paying daily jobs nearby!";
 
       if (lower.includes("job") || lower.includes("work")) {
@@ -801,17 +811,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         reply =
           "Check the Welfare Schemes tab for E-Shram, PM Shram Yogi Maandhan, and Ayushman Bharat eligibility details.";
       }
+    }
 
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: `msg-${Date.now() + 1}`,
-          sender: "bot",
-          text: reply,
-          time: now(),
-        },
-      ]);
-    }, 600);
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: `msg-${Date.now() + 1}`,
+        sender: "bot",
+        text: reply as string,
+        time: now(),
+      },
+    ]);
   };
 
   // ─── Provider value ───────────────────────────────────────────────────────

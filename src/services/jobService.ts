@@ -11,6 +11,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "../firebase/firebaseClient";
+import { createNotification } from "./notificationService";
 
 export interface FirestoreJob {
   id: string;
@@ -88,6 +89,15 @@ export async function applyToJobDoc(
     appliedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+
+  // 🔔 Notify the employer that someone applied
+  await createNotification(
+    employerId,
+    "application_received",
+    "New application received",
+    `A worker applied for "${jobTitle}".`,
+    jobId,
+  );
 }
 
 export async function fetchMyAppliedJobIds(
@@ -160,4 +170,30 @@ export async function updateApplicationStatusDoc(
     status,
     updatedAt: serverTimestamp(),
   });
+
+  // 🔔 Notify the worker that their application status changed
+  const appSnap = await getDoc(doc(db, "applications", applicationId));
+  if (appSnap.exists()) {
+    const a = appSnap.data();
+    const friendlyStatus: Record<string, string> = {
+      accepted: "accepted",
+      rejected: "rejected",
+      in_progress: "marked as in progress",
+      completed: "marked as completed",
+    };
+    const label = friendlyStatus[status];
+    if (label) {
+      await createNotification(
+        a.workerId,
+        status === "accepted"
+          ? "application_accepted"
+          : status === "rejected"
+            ? "application_rejected"
+            : "job_completed",
+        "Application update",
+        `Your application for "${a.jobTitle}" was ${label}.`,
+        a.jobId,
+      );
+    }
+  }
 }
