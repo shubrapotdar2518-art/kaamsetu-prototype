@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Zap, ArrowLeft, ArrowRight, Radio, Bell, Users, Clock, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { Zap, ArrowLeft, ArrowRight, Radio, Bell, Users, Clock, ShieldAlert, CheckCircle2, Briefcase, MapPin } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../../layouts/DashboardLayout';
 import { useApp } from '../../context/AppContext';
@@ -10,25 +10,37 @@ export const EmergencyHiringPage: React.FC = () => {
   const { t } = useLanguage();
   const navigate = useNavigate();
 
+  const [title, setTitle] = useState('');
   const [trade, setTrade] = useState('General Labour / Helper');
+  const [location, setLocation] = useState('');
   const [workersCount, setWorkersCount] = useState('2');
   const [urgencyHours, setUrgencyHours] = useState('Within 2 Hours');
   const [wage, setWage] = useState('950'); // Emergency higher wage incentive
+  const [description, setDescription] = useState('');
   const [isBroadcasting, setIsBroadcasting] = useState(false);
 
   const handleBroadcast = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!title.trim()) {
+      showToast('Please enter a job title', 'error');
+      return;
+    }
+    if (!location.trim()) {
+      showToast('Please enter a work site location', 'error');
+      return;
+    }
+
     setIsBroadcasting(true);
 
     setTimeout(() => {
       addJobPost({
-        title: `🚨 EMERGENCY: ${workersCount} ${trade} Needed (${urgencyHours})`,
+        title: `🚨 EMERGENCY: ${title.trim()}`,
         trade: trade,
-        location: 'Andheri West (3 km radius)',
+        location: location.trim(),
         wage: Number(wage) || 950,
         openings: Number(workersCount) || 2,
-        duration: 'Today - Immediate',
-        description: 'Urgent requirement broadcasted via KaamSetu SOS. Instant cash/UPI payout upon completion.',
+        duration: urgencyHours,
+        description: description.trim() || 'Urgent requirement broadcasted via KaamSetu SOS. Instant cash/UPI payout upon completion.',
       });
 
       setIsBroadcasting(false);
@@ -82,6 +94,24 @@ export const EmergencyHiringPage: React.FC = () => {
 
         <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm">
           <form onSubmit={handleBroadcast} className="space-y-4">
+            {/* Job Title */}
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1.5">
+                Job Title <span className="text-rose-500">*</span>
+              </label>
+              <div className="relative">
+                <Briefcase className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  required
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. Carpenter Needed Urgently for Site Repair"
+                  className="w-full pl-10 pr-4 py-3 rounded-2xl bg-gray-50 border border-gray-200 text-sm outline-none focus:bg-white focus:border-[#F97316]"
+                />
+              </div>
+            </div>
+
             {/* Required Trade */}
             <div>
               <label className="block text-xs font-bold text-gray-700 mb-1.5">
@@ -136,6 +166,24 @@ export const EmergencyHiringPage: React.FC = () => {
               </div>
             </div>
 
+            {/* Work Site Location */}
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1.5">
+                Work Site Location <span className="text-rose-500">*</span>
+              </label>
+              <div className="relative">
+                <MapPin className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  required
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="e.g. Lokhandwala Complex, Andheri West, Mumbai"
+                  className="w-full pl-10 pr-4 py-3 rounded-2xl bg-gray-50 border border-gray-200 text-sm outline-none focus:bg-white focus:border-[#F97316]"
+                />
+              </div>
+            </div>
+
             {/* Emergency Incentive Wage */}
             <div>
               <label className="block text-xs font-bold text-gray-700 mb-1.5">
@@ -153,6 +201,21 @@ export const EmergencyHiringPage: React.FC = () => {
                   className="w-full pl-8 pr-4 py-3 rounded-2xl bg-gray-50 border border-gray-200 text-sm font-bold text-gray-900 outline-none focus:bg-white focus:border-[#F97316]"
                 />
               </div>
+            </div>
+
+            {/* Additional details */}
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1.5">
+                Work Details &amp; Requirements
+                <span className="text-gray-400 font-normal ml-1">(Optional)</span>
+              </label>
+              <textarea
+                rows={3}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Mention specific tools needed, tea/lunch provision, or site access instructions..."
+                className="w-full p-3.5 rounded-2xl bg-gray-50 border border-gray-200 text-xs sm:text-sm outline-none focus:bg-white focus:border-[#F97316]"
+              />
             </div>
 
             {/* Submit */}

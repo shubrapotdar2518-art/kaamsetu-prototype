@@ -106,7 +106,7 @@ export const WorkerDashboardPage: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {availableJobs.slice(0, 4).map((job) => (
+                {availableJobs.slice(0, 2).map((job) => (
                   <JobCard key={job.id} job={job} />
                 ))}
               </div>
@@ -141,7 +141,7 @@ export const WorkerDashboardPage: React.FC = () => {
               </div>
 
               <div className="space-y-3">
-                {SCHEMES_LIST.slice(0, 3).map((scheme) => (
+                {SCHEMES_LIST.slice(0, 2).map((scheme) => (
                   <WelfareSchemeCard key={scheme.id} scheme={scheme} compact />
                 ))}
               </div>

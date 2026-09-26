@@ -46,24 +46,7 @@ export const EmployerDashboardPage: React.FC = () => {
             </p>
           </div>
 
-          {/* Quick Action Buttons */}
-          <div className="flex items-center gap-2">
-            <Link
-              to="/emergency-hiring"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-[#FFF7ED] hover:bg-[#FFEDD5] border border-[#FDBA74] text-xs sm:text-sm font-extrabold text-[#C2410C] transition-all shadow-2xs animate-pulse-subtle"
-            >
-              <Zap className="w-4 h-4 text-[#F97316]" />
-              <span>{t('emergencyHiring', 'Emergency Hiring')}</span>
-            </Link>
-
-            <Link
-              to="/post-job"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-[#15803D] hover:bg-[#166534] text-white text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-all"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span>{t('postAJob', 'Post a Job')}</span>
-            </Link>
-          </div>
+          
         </div>
 
         {/* 1. Profile Overview Card */}
@@ -143,7 +126,7 @@ export const EmployerDashboardPage: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {employerJobPosts.map((post) => (
+                        {employerJobPosts.slice(0, 3).map((post) => (
               <div
                 key={post.id}
                 className="bg-white p-5 rounded-2xl border border-gray-100 shadow-2xs hover:shadow-md hover:border-emerald-200 transition-all flex flex-col justify-between"
@@ -199,7 +182,7 @@ export const EmployerDashboardPage: React.FC = () => {
           </div>
 
           <div className="bg-white rounded-3xl border border-gray-100 shadow-2xs overflow-hidden divide-y divide-gray-100">
-            {applications.map((app) => (
+                        {applications.slice(0, 3).map((app) => (
               <div
                 key={app.id}
                 className="p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-gray-50/70 transition-colors"
