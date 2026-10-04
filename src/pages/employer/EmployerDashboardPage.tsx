@@ -182,7 +182,7 @@ export const EmployerDashboardPage: React.FC = () => {
           </div>
 
           <div className="bg-white rounded-3xl border border-gray-100 shadow-2xs overflow-hidden divide-y divide-gray-100">
-                        {applications.slice(0, 3).map((app) => (
+                        {applications.map((app) => (
               <div
                 key={app.id}
                 className="p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-gray-50/70 transition-colors"

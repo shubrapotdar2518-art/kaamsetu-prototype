@@ -1,0 +1,176 @@
+<!doctype html>
+<!--
+  seed-faqs.html
+  ONE-TIME USE: run this once to fill your chatbotFAQs collection, then delete this file.
+
+  HOW TO USE:
+  1. Place this file in your project ROOT folder (next to firebase-config.js)
+  2. Run: npm run dev
+  3. Open: http://localhost:3000/seed-faqs.html
+  4. Click the button and WAIT for "Done!" before closing the tab
+  5. Check Firebase Console -> Firestore -> chatbotFAQs to confirm
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Seed Chatbot FAQs</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        max-width: 600px;
+        margin: 40px auto;
+        padding: 0 20px;
+      }
+      button {
+        padding: 12px 24px;
+        font-size: 16px;
+        background: #15803d;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      button:disabled {
+        background: #999;
+        cursor: not-allowed;
+      }
+      #log {
+        margin-top: 20px;
+        white-space: pre-wrap;
+        font-family: monospace;
+        font-size: 13px;
+        background: #f5f5f5;
+        padding: 12px;
+        border-radius: 8px;
+        min-height: 100px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Seed Chatbot FAQs</h1>
+    <p>Click the button below ONCE to add 8 sample FAQs to Firestore.</p>
+    <button id="seedBtn">Insert FAQs</button>
+    <div id="log">Waiting for click...</div>
+
+    <script type="module">
+      import { db } from "./firebase-config.js";
+      import {
+        collection,
+        addDoc,
+        getDocs,
+        serverTimestamp,
+      } from "firebase/firestore";
+
+      const logEl = document.getElementById("log");
+      const btn = document.getElementById("seedBtn");
+
+      function log(msg) {
+        logEl.textContent += "\n" + msg;
+        console.log(msg);
+      }
+
+      const faqs = [
+        {
+          question: "How do I apply for a job?",
+          answer:
+            "Open the Recommended Jobs or Available Jobs tab, tap on a job card to see details, then tap Apply. The employer will see your verified profile automatically.",
+          keywords: ["apply", "job", "work", "hire"],
+          category: "jobs",
+          language: "en",
+        },
+        {
+          question: "How do I get paid after finishing work?",
+          answer:
+            "Employers pay daily wages directly via UPI, bank transfer, or cash after the job is completed. KaamSetu does not take any commission or middleman fee.",
+          keywords: ["paid", "payment", "salary", "wage", "money"],
+          category: "payment",
+          language: "en",
+        },
+        {
+          question: "What welfare schemes are available for workers?",
+          answer:
+            "Check the Welfare Schemes tab for details on E-Shram registration, PM Shram Yogi Maandhan pension, Ayushman Bharat health cover, and accident insurance schemes.",
+          keywords: ["scheme", "welfare", "insurance", "pension", "benefit"],
+          category: "welfare",
+          language: "en",
+        },
+        {
+          question: "How do I update my skills or profile?",
+          answer:
+            "Go to your Profile page and tap Edit. You can update your primary skill, additional skills, daily wage expectation, and experience anytime.",
+          keywords: ["profile", "skill", "edit", "update"],
+          category: "profile",
+          language: "en",
+        },
+        {
+          question: "How does the job matching work?",
+          answer:
+            "KaamSetu scores each open job against your skill, location, availability, and rating to show you the best matches first, marked with a Match badge.",
+          keywords: ["match", "recommend", "matching", "score"],
+          category: "jobs",
+          language: "en",
+        },
+        {
+          question: "Can I withdraw a job application?",
+          answer:
+            "Yes. Open the job from your applied jobs list and tap Withdraw Application if you're no longer available or interested.",
+          keywords: ["withdraw", "cancel", "application"],
+          category: "jobs",
+          language: "en",
+        },
+        {
+          question: "How do I contact an employer directly?",
+          answer:
+            "Once an employer accepts your application, you can message them directly from the Messages tab.",
+          keywords: ["message", "contact", "chat", "employer"],
+          category: "messaging",
+          language: "en",
+        },
+        {
+          question: "Is my personal information safe on KaamSetu?",
+          answer:
+            "Your phone number and personal details are only shared with an employer once you apply to their job. KaamSetu never sells your data to third parties.",
+          keywords: ["safe", "privacy", "data", "secure"],
+          category: "general",
+          language: "en",
+        },
+      ];
+
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        logEl.textContent = "Starting...";
+
+        try {
+          const existing = await getDocs(collection(db, "chatbotFAQs"));
+          if (!existing.empty) {
+            log(
+              `⚠️ Collection already has ${existing.size} FAQ(s). Skipping to avoid duplicates.`,
+            );
+            log(
+              "If you want to re-seed, delete existing documents in Firebase Console first.",
+            );
+            btn.disabled = false;
+            return;
+          }
+
+          for (const faq of faqs) {
+            const ref = await addDoc(collection(db, "chatbotFAQs"), {
+              ...faq,
+              isActive: true,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+            log(`✅ Added: ${faq.question} (${ref.id})`);
+          }
+
+          log("\n🎉 Done! Check Firebase Console -> Firestore -> chatbotFAQs");
+        } catch (err) {
+          log("❌ Error: " + err.message);
+          console.error(err);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

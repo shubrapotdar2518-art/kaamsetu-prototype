@@ -75,6 +75,13 @@ export const translations: Record<Language, Record<string, string>> = {
     termsLink: 'Terms & Conditions',
     privacyLink: 'Privacy Policy',
     orContinueWith: 'Or continue with',
+
+    //Login
+    loginSubtitle: "Enter your registered email and password",
+loggingIn: "Logging in...",
+welcomeBack: "Welcome back!",
+newToKaamSetu: "New to KaamSetu?",
+secureLogin: "Secure login • KaamSetu",
     
     // Verify OTP
     verifyYourNumber: 'Verify Your Number',
@@ -268,6 +275,13 @@ export const translations: Record<Language, Record<string, string>> = {
     termsLink: 'नियम और शर्तें',
     privacyLink: 'गोपनीयता नीति',
     orContinueWith: 'या इसके साथ जारी रखें',
+
+    //Login
+    loginSubtitle: "अपना पंजीकृत ईमेल और पासवर्ड दर्ज करें",
+loggingIn: "लॉगिन हो रहा है...",
+welcomeBack: "वापसी पर स्वागत है!",
+newToKaamSetu: "कामसेतु पर नए हैं?",
+secureLogin: "सुरक्षित लॉगिन • कामसेतु",
     
     // Verify OTP
     verifyYourNumber: 'अपना नंबर सत्यापित करें',
@@ -461,6 +475,13 @@ export const translations: Record<Language, Record<string, string>> = {
     termsLink: 'अटी व शर्ती',
     privacyLink: 'गोपनीयता धोरण',
     orContinueWith: 'किंवा यासह सुरू ठेवा',
+
+    //Login
+    loginSubtitle: "तुमचा नोंदणीकृत ईमेल आणि पासवर्ड टाका",
+loggingIn: "लॉगिन होत आहे...",
+welcomeBack: "पुन्हा स्वागत आहे!",
+newToKaamSetu: "कामसेतूवर नवीन आहात?",
+secureLogin: "सुरक्षित लॉगिन • कामसेतू",
     
     // Verify OTP
     verifyYourNumber: 'तुमचा नंबर सत्यापित करा',
@@ -654,6 +675,13 @@ export const translations: Record<Language, Record<string, string>> = {
     termsLink: 'விதிமுறைகள்',
     privacyLink: 'தனியுரிமைக் கொள்கை',
     orContinueWith: 'அல்லது இதனுடன் தொடரவும்',
+
+    //Login
+    loginSubtitle: "உங்கள் பதிவு செய்யப்பட்ட மின்னஞ்சல் மற்றும் கடவுச்சொல்லை உள்ளிடவும்",
+loggingIn: "உள்நுழைகிறது...",
+welcomeBack: "மீண்டும் வரவேற்கிறோம்!",
+newToKaamSetu: "காம்சேதுவிற்கு புதியவரா?",
+secureLogin: "பாதுகாப்பான உள்நுழைவு • காம்சேது",
     
     // Verify OTP
     verifyYourNumber: 'உங்கள் எண்ணைச் சரிபார்க்கவும்',
@@ -847,6 +875,13 @@ export const translations: Record<Language, Record<string, string>> = {
     termsLink: 'నిబంధనలు',
     privacyLink: 'గోప్యతా విధానం',
     orContinueWith: 'లేదా దీనితో కొనసాగించండి',
+
+    //Login
+    loginSubtitle: "మీ నమోదిత ఈమెయిల్ మరియు పాస్‌వర్డ్‌ను నమోదు చేయండి",
+loggingIn: "లాగిన్ అవుతోంది...",
+welcomeBack: "తిరిగి స్వాగతం!",
+newToKaamSetu: "కామ్‌సేతుకు కొత్తవారా?",
+secureLogin: "సురక్షిత లాగిన్ • కామ్‌సేతు",
     
     // Verify OTP
     verifyYourNumber: 'మీ నంబర్‌ను ధృవీకరించండి',
@@ -1040,6 +1075,13 @@ export const translations: Record<Language, Record<string, string>> = {
     termsLink: 'ನಿಯಮಗಳು ಮತ್ತು ಷರತ್ತುಗಳು',
     privacyLink: 'ಗೌಪ್ಯತಾ ನೀತಿ',
     orContinueWith: 'ಅಥವಾ ಇದರೊಂದಿಗೆ ಮುಂದುವರಿಯಿರಿ',
+
+    //Login
+    loginSubtitle: "ನಿಮ್ಮ ನೋಂದಾಯಿತ ಇಮೇಲ್ ಮತ್ತು ಪಾಸ್‌ವರ್ಡ್ ನಮೂದಿಸಿ",
+loggingIn: "ಲಾಗಿನ್ ಆಗುತ್ತಿದೆ...",
+welcomeBack: "ಮತ್ತೆ ಸ್ವಾಗತ!",
+newToKaamSetu: "ಕಾಮ್‌ಸೇತುವಿಗೆ ಹೊಸಬರೇ?",
+secureLogin: "ಸುರಕ್ಷಿತ ಲಾಗಿನ್ • ಕಾಮ್‌ಸೇತು",
     
     // Verify OTP
     verifyYourNumber: 'ನಿಮ್ಮ ಸಂಖ್ಯೆಯನ್ನು ಪರಿಶೀಲಿಸಿ',
