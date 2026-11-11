@@ -10,6 +10,7 @@ import {
   markNotificationRead,
   type AppNotification,
 } from "../services/notificationService";
+import { getApplicationStatusDoc } from "../services/jobService";
 
 interface NavbarProps {
   showSidebarToggle?: boolean;
@@ -27,13 +28,88 @@ const timeAgo = (seconds?: number | null): string => {
 };
 
 export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
-  const { userProfile, userRole } = useApp();
+  const { userProfile, userRole, acceptJobOffer, rejectJobOffer } = useApp();
   const { t } = useLanguage();
   const navigate = useNavigate();
 
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // ─── Job offer (Accept / Reject) support ───
+  // Current Firestore status of each offer, keyed by application id (jobId_workerId)
+  const [offerStatuses, setOfferStatuses] = useState<Record<string, string>>({});
+  // Which offer is being processed right now (disables its buttons)
+  const [busyOfferId, setBusyOfferId] = useState<string | null>(null);
+
+  // Build the application id for an offer notification
+  const getOfferApplicationId = (n: AppNotification): string | null =>
+    n.relatedId && userProfile.uid ? `${n.relatedId}_${userProfile.uid}` : null;
+
+  // Whenever notifications change, look up the real status of each offer
+  useEffect(() => {
+    if (!userProfile.uid) return;
+    const offers = notifications.filter((n) => n.type === "job_offer");
+    offers.forEach(async (n) => {
+      const appId = getOfferApplicationId(n);
+      if (!appId) return;
+      const status = await getApplicationStatusDoc(appId);
+      if (status) {
+        setOfferStatuses((prev) => ({ ...prev, [appId]: status }));
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifications, userProfile.uid]);
+
+  const handleAcceptOffer = async (
+    e: React.MouseEvent,
+    n: AppNotification,
+  ) => {
+    e.stopPropagation();
+    const appId = getOfferApplicationId(n);
+    if (!appId || busyOfferId) return;
+    setBusyOfferId(appId);
+    const ok = await acceptJobOffer(appId);
+    if (ok) {
+      setOfferStatuses((prev) => ({ ...prev, [appId]: "in_progress" }));
+      if (!n.isRead) {
+        try {
+          await markNotificationRead(n.id);
+          setNotifications((prev) =>
+            prev.map((x) => (x.id === n.id ? { ...x, isRead: true } : x)),
+          );
+        } catch (err) {
+          console.error("Failed to mark notification read:", err);
+        }
+      }
+    }
+    setBusyOfferId(null);
+  };
+
+  const handleRejectOffer = async (
+    e: React.MouseEvent,
+    n: AppNotification,
+  ) => {
+    e.stopPropagation();
+    const appId = getOfferApplicationId(n);
+    if (!appId || busyOfferId) return;
+    setBusyOfferId(appId);
+    const ok = await rejectJobOffer(appId);
+    if (ok) {
+      setOfferStatuses((prev) => ({ ...prev, [appId]: "offer_declined" }));
+      if (!n.isRead) {
+        try {
+          await markNotificationRead(n.id);
+          setNotifications((prev) =>
+            prev.map((x) => (x.id === n.id ? { ...x, isRead: true } : x)),
+          );
+        } catch (err) {
+          console.error("Failed to mark notification read:", err);
+        }
+      }
+    }
+    setBusyOfferId(null);
+  };
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
@@ -59,8 +135,16 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handleBellClick = () => {
-    setShowDropdown((prev) => !prev);
+   const handleBellClick = () => {
+    const willOpen = !showDropdown;
+    setShowDropdown(willOpen);
+
+    // Fetch the latest notifications each time the bell is opened
+    if (willOpen && userProfile.uid) {
+      getMyNotifications(userProfile.uid)
+        .then(setNotifications)
+        .catch((err) => console.error("Failed to refresh notifications:", err));
+    }
   };
 
   const handleNotificationClick = async (notification: AppNotification) => {
@@ -137,31 +221,88 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
                         </p>
                       )}
 
-                      {notifications.map((n) => (
-                        <button
-                          key={n.id}
-                          type="button"
-                          onClick={() => handleNotificationClick(n)}
-                          className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors ${
-                            !n.isRead ? "bg-emerald-50/50" : ""
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="text-xs font-bold text-gray-900">
-                              {n.title}
+                                            {notifications.map((n) => {
+                        const offerAppId =
+                          n.type === "job_offer"
+                            ? getOfferApplicationId(n)
+                            : null;
+                        const offerStatus = offerAppId
+                          ? offerStatuses[offerAppId]
+                          : undefined;
+                        const isBusy = offerAppId !== null && busyOfferId === offerAppId;
+
+                        return (
+                          <div
+                            key={n.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => handleNotificationClick(n)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleNotificationClick(n);
+                            }}
+                            className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer ${
+                              !n.isRead ? "bg-emerald-50/50" : ""
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-xs font-bold text-gray-900">
+                                {n.title}
+                              </p>
+                              {!n.isRead && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#15803D] mt-1 shrink-0" />
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-600 mt-0.5">
+                              {n.message}
                             </p>
-                            {!n.isRead && (
-                              <span className="w-1.5 h-1.5 rounded-full bg-[#15803D] mt-1 shrink-0" />
+
+                            {n.type === "job_offer" && offerStatus === "offered" && (
+                              <div className="flex items-center gap-2 mt-2">
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={(e) => handleAcceptOffer(e, n)}
+                                  className="px-3 py-1.5 rounded-lg bg-[#15803D] hover:bg-[#166534] disabled:opacity-50 text-white text-[11px] font-bold transition-colors"
+                                >
+                                  Accept
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={(e) => handleRejectOffer(e, n)}
+                                  className="px-3 py-1.5 rounded-lg bg-white hover:bg-red-50 disabled:opacity-50 text-red-600 border border-red-200 text-[11px] font-bold transition-colors"
+                                >
+                                  Reject
+                                </button>
+                              </div>
                             )}
+
+                            {n.type === "job_offer" && offerStatus === "in_progress" && (
+                              <p className="text-[11px] font-bold text-[#15803D] mt-2">
+                                ✓ Offer accepted
+                              </p>
+                            )}
+                            {n.type === "job_offer" && offerStatus === "offer_declined" && (
+                              <p className="text-[11px] font-bold text-red-600 mt-2">
+                                ✕ Offer declined
+                              </p>
+                            )}
+                            {n.type === "job_offer" &&
+                              offerStatus !== undefined &&
+                              !["offered", "in_progress", "offer_declined"].includes(
+                                offerStatus,
+                              ) && (
+                                <p className="text-[11px] font-bold text-gray-500 mt-2">
+                                  Offer no longer available
+                                </p>
+                              )}
+
+                            <p className="text-[10px] text-gray-400 mt-1">
+                              {timeAgo(n.createdAt?.seconds)}
+                            </p>
                           </div>
-                          <p className="text-xs text-gray-600 mt-0.5">
-                            {n.message}
-                          </p>
-                          <p className="text-[10px] text-gray-400 mt-1">
-                            {timeAgo(n.createdAt?.seconds)}
-                          </p>
-                        </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}

@@ -9,6 +9,7 @@ import {
   query,
   where,
   serverTimestamp,
+  runTransaction,
 } from "firebase/firestore";
 import { db } from "../firebase/firebaseClient";
 import { createNotification } from "./notificationService";
@@ -194,6 +195,172 @@ export async function updateApplicationStatusDoc(
         `Your application for "${a.jobTitle}" was ${label}.`,
         a.jobId,
       );
+        }
+  }
+}
+
+// Employer sends a job offer to a worker who applied.
+// The worker must accept it before they count as hired.
+export async function sendJobOfferDoc(
+  applicationId: string,
+  employerId: string,
+) {
+  const appRef = doc(db, "applications", applicationId);
+  const appSnap = await getDoc(appRef);
+  if (!appSnap.exists()) throw new Error("Application not found.");
+
+  const a = appSnap.data();
+  if (a.employerId !== employerId) {
+    throw new Error("You can only send offers for your own jobs.");
+  }
+  if (["offered", "in_progress", "completed"].includes(a.status)) {
+    throw new Error("An offer was already sent to this worker.");
+  }
+
+  const jobSnap = await getDoc(doc(db, "jobs", a.jobId));
+  if (!jobSnap.exists()) throw new Error("Job not found.");
+
+  const j = jobSnap.data();
+  if (j.status !== "open" || (j.hiredCount ?? 0) >= (j.openings ?? 1)) {
+    throw new Error("All positions for this job are already filled.");
+  }
+
+  await updateDoc(appRef, {
+    status: "offered",
+    updatedAt: serverTimestamp(),
+  });
+
+  // 🔔 Notify the worker about the offer (Accept / Reject shown in the Navbar)
+  await createNotification(
+    a.workerId,
+    "job_offer",
+    "You have a job offer!",
+    `${j.employerName ?? "An employer"} offered you the job "${a.jobTitle}".`,
+    a.jobId,
+  );
+}
+
+// Worker accepts a job offer.
+// Updates the application, the job's hiredCount/status, then notifies the employer.
+export async function acceptJobOfferDoc(
+  applicationId: string,
+  workerId: string,
+) {
+  const appRef = doc(db, "applications", applicationId);
+
+  const info = await runTransaction(db, async (tx) => {
+    // 1. Read everything first (Firestore requires reads before writes)
+    const appSnap = await tx.get(appRef);
+    if (!appSnap.exists()) throw new Error("Application not found.");
+    const a = appSnap.data();
+
+    if (a.workerId !== workerId) {
+      throw new Error("This offer does not belong to you.");
     }
+    if (a.status !== "offered") {
+      throw new Error("This offer is no longer pending.");
+    }
+
+    const jobRef = doc(db, "jobs", a.jobId);
+    const jobSnap = await tx.get(jobRef);
+    if (!jobSnap.exists()) throw new Error("Job not found.");
+    const j = jobSnap.data();
+
+    const openings: number = j.openings ?? 1;
+    const hired: number = j.hiredCount ?? 0;
+    if (hired >= openings) {
+      throw new Error("Sorry, all positions for this job are already filled.");
+    }
+
+    // 2. Then write
+    const newHired = hired + 1;
+    tx.update(appRef, {
+      status: "in_progress",
+      updatedAt: serverTimestamp(),
+    });
+    tx.update(jobRef, {
+      hiredCount: newHired,
+      status: newHired >= openings ? "filled" : "open",
+      updatedAt: serverTimestamp(),
+    });
+
+    return {
+      employerId: a.employerId as string,
+      jobId: a.jobId as string,
+      jobTitle: (a.jobTitle ?? "") as string,
+    };
+  });
+
+  // 🔔 Notify the employer (only runs if the transaction succeeded)
+  let workerName = "A worker";
+  try {
+    const userSnap = await getDoc(doc(db, "users", workerId));
+    workerName = userSnap.data()?.name ?? workerName;
+  } catch {
+    // If the name can't be read, the generic text is fine
+  }
+
+  await createNotification(
+    info.employerId,
+    "offer_accepted",
+    "Job offer accepted",
+    `${workerName} accepted your offer for "${info.jobTitle}".`,
+    info.jobId,
+  );
+}
+
+// Worker rejects a job offer.
+// The job is not changed, so it stays open for other workers.
+export async function rejectJobOfferDoc(
+  applicationId: string,
+  workerId: string,
+) {
+  const appRef = doc(db, "applications", applicationId);
+  const appSnap = await getDoc(appRef);
+  if (!appSnap.exists()) throw new Error("Application not found.");
+
+  const a = appSnap.data();
+  if (a.workerId !== workerId) {
+    throw new Error("This offer does not belong to you.");
+  }
+  if (a.status !== "offered") {
+    throw new Error("This offer is no longer pending.");
+  }
+
+  await updateDoc(appRef, {
+    status: "offer_declined",
+    updatedAt: serverTimestamp(),
+  });
+
+  // 🔔 Notify the employer (job stays open)
+  let workerName = "A worker";
+  try {
+    const userSnap = await getDoc(doc(db, "users", workerId));
+    workerName = userSnap.data()?.name ?? workerName;
+  } catch {
+    // If the name can't be read, the generic text is fine
+  }
+
+  await createNotification(
+    a.employerId,
+    "offer_rejected",
+    "Job offer declined",
+    `${workerName} declined your offer for "${a.jobTitle}".`,
+    a.jobId,
+  );
+}
+
+// Read one application's current status (used by the Navbar to decide
+// whether Accept / Reject buttons should still be shown for an offer).
+export async function getApplicationStatusDoc(
+  applicationId: string,
+): Promise<string | null> {
+  try {
+    const snap = await getDoc(doc(db, "applications", applicationId));
+    if (!snap.exists()) return null;
+    return (snap.data().status ?? null) as string | null;
+  } catch (err) {
+    console.error("getApplicationStatusDoc failed:", err);
+    return null;
   }
 }

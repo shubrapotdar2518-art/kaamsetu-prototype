@@ -20,7 +20,7 @@ import { useApp } from '../../context/AppContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 
 export const EmployerDashboardPage: React.FC = () => {
-  const { userProfile, employerJobPosts, applications, updateApplicationStatus, showToast } = useApp();
+  const { userProfile, employerJobPosts, applications, updateApplicationStatus, sendJobOffer, showToast } = useApp();
   const { t } = useLanguage();
   const navigate = useNavigate();
 
@@ -28,8 +28,8 @@ export const EmployerDashboardPage: React.FC = () => {
     updateApplicationStatus(appId, 'Shortlisted');
   };
 
-  const handleHire = (appId: string, name: string) => {
-    updateApplicationStatus(appId, 'Hired');
+   const handleHire = (appId: string, name: string) => {
+    sendJobOffer(appId);
   };
 
   return (
@@ -208,9 +208,19 @@ export const EmployerDashboardPage: React.FC = () => {
                           {t('new', 'New')}
                         </span>
                       )}
-                      {app.status === 'Hired' && (
+                        {app.status === 'Hired' && (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
                           ★ Hired
+                        </span>
+                      )}
+                      {app.status === 'Offered' && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                          ⏳ Offer sent
+                        </span>
+                      )}
+                      {app.status === 'Declined' && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-700 border border-red-200">
+                          ✕ Declined
                         </span>
                       )}
                     </div>
@@ -245,25 +255,28 @@ export const EmployerDashboardPage: React.FC = () => {
                     <span>{t('callWorker', 'Call')}</span>
                   </a>
 
-                  {app.status !== 'Shortlisted' && app.status !== 'Hired' && (
-                    <button
-                      type="button"
-                      onClick={() => handleShortlist(app.id, app.workerName)}
-                      className="px-3 py-2 rounded-xl bg-[#ECFDF5] hover:bg-[#DCFCE7] text-[#15803D] border border-emerald-200 text-xs font-bold transition-colors"
-                    >
-                      {t('shortlistCandidate', 'Shortlist')}
-                    </button>
-                  )}
+                                    {app.status !== 'Shortlisted' &&
+                    app.status !== 'Hired' &&
+                    app.status !== 'Offered' &&
+                    app.status !== 'Declined' && (
+                      <button
+                        type="button"
+                        onClick={() => handleShortlist(app.id, app.workerName)}
+                        className="px-3 py-2 rounded-xl bg-[#ECFDF5] hover:bg-[#DCFCE7] text-[#15803D] border border-emerald-200 text-xs font-bold transition-colors"
+                      >
+                        {t('shortlistCandidate', 'Shortlist')}
+                      </button>
+                    )}
 
-                  {app.status !== 'Hired' && (
+                  {app.status !== 'Hired' && app.status !== 'Offered' && (
                     <button
                       type="button"
                       onClick={() => handleHire(app.id, app.workerName)}
                       className="px-3.5 py-2 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white text-xs font-bold shadow-xs transition-colors"
                     >
-                      {t('hireNow', 'Hire Now')}
+                      Send Offer
                     </button>
-                  )}
+                   )}
                 </div>
               </div>
             ))}

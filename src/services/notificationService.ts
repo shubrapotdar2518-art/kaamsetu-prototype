@@ -21,7 +21,10 @@ export type NotificationType =
   | "application_accepted"
   | "application_rejected"
   | "job_completed"
-  | "new_message";
+  | "new_message"
+  | "job_offer"
+  | "offer_accepted"
+  | "offer_rejected";
 
 export interface AppNotification {
   id: string;

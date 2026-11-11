@@ -29,6 +29,9 @@ import {
   fetchMyAppliedJobIds,
   fetchEmployerApplications,
   updateApplicationStatusDoc,
+  sendJobOfferDoc,
+  acceptJobOfferDoc,
+  rejectJobOfferDoc,
   type FirestoreJob,
 } from "../services/jobService";
 import { findBestFAQAnswer } from "../services/faqService";
@@ -60,7 +63,7 @@ export interface JobApplication {
   location: string;
   phone: string;
   rating: number;
-  status: "New" | "Shortlisted" | "Hired" | "Rejected";
+  status: "New" | "Shortlisted" | "Hired" | "Rejected" | "Offered" | "Declined";
   appliedFor: string;
   appliedDate: string;
   avatar: string;
@@ -153,7 +156,10 @@ interface AppContextType {
     additionalSkills: string;
     dailyWage: string;
   }) => Promise<void>;
-  refreshJobs: () => Promise<void>;
+    refreshJobs: () => Promise<void>;
+  sendJobOffer: (id: string) => Promise<void>;
+  acceptJobOffer: (applicationId: string) => Promise<boolean>;
+  rejectJobOffer: (applicationId: string) => Promise<boolean>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -347,6 +353,8 @@ const statusToUi = (s: string): JobApplication["status"] => {
   if (s === "accepted") return "Shortlisted";
   if (s === "in_progress" || s === "completed") return "Hired";
   if (s === "rejected") return "Rejected";
+  if (s === "offered") return "Offered";
+  if (s === "offer_declined") return "Declined";
   return "New";
 };
 
@@ -354,6 +362,8 @@ const uiToStatus = (s: JobApplication["status"]): string => {
   if (s === "Shortlisted") return "accepted";
   if (s === "Hired") return "in_progress";
   if (s === "Rejected") return "rejected";
+  if (s === "Offered") return "offered";
+  if (s === "Declined") return "offer_declined";
   return "pending";
 };
 
@@ -536,11 +546,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     avatar: "",
   }));
 
-  // Keep the dummy demo applications and add the real ones after them
+    // Show real applications first (newest on top), then the demo ones
   const dummyIds = new Set(INITIAL_APPLICATIONS.map((d) => d.id));
   setApplications([
-    ...INITIAL_APPLICATIONS,
     ...realApplications.filter((a) => !dummyIds.has(a.id)),
+    ...INITIAL_APPLICATIONS,
   ]);
 }
       }
@@ -778,6 +788,79 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     showToast(`Worker status updated to ${status}`);
   };
 
+    // ─── Job offers ───────────────────────────────────────────────────────────
+
+  // Employer: send a job offer to a worker who applied
+  const sendJobOffer = async (id: string) => {
+    // Demo applications (no underscore in the id) only change on screen
+    if (!id.includes("_")) {
+      setApplications((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, status: "Offered" } : a)),
+      );
+      showToast("Job offer sent!");
+      return;
+    }
+
+    if (!userProfile.uid) {
+      showToast("Please login first.", "error");
+      return;
+    }
+
+    try {
+      await sendJobOfferDoc(id, userProfile.uid);
+      setApplications((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, status: "Offered" } : a)),
+      );
+      showToast("Job offer sent! The worker has been notified.");
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Could not send the offer.",
+        "error",
+      );
+    }
+  };
+
+  // Worker: accept a job offer
+  const acceptJobOffer = async (applicationId: string): Promise<boolean> => {
+    if (!userProfile.uid) {
+      showToast("Please login first.", "error");
+      return false;
+    }
+
+    try {
+      await acceptJobOfferDoc(applicationId, userProfile.uid);
+      showToast("Offer accepted! The employer has been notified.");
+      await refreshJobs();
+      return true;
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Could not accept the offer.",
+        "error",
+      );
+      return false;
+    }
+  };
+
+  // Worker: reject a job offer
+  const rejectJobOffer = async (applicationId: string): Promise<boolean> => {
+    if (!userProfile.uid) {
+      showToast("Please login first.", "error");
+      return false;
+    }
+
+    try {
+      await rejectJobOfferDoc(applicationId, userProfile.uid);
+      showToast("Offer declined. The employer has been notified.", "info");
+      return true;
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Could not decline the offer.",
+        "error",
+      );
+      return false;
+    }
+  };
+
   // ─── Chatbot ──────────────────────────────────────────────────────────────
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -880,6 +963,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         chooseRoleAndSave,
         saveWorkerProfile,
         refreshJobs,
+        sendJobOffer,
+        acceptJobOffer,
+        rejectJobOffer,
       }}
     >
       {children}
