@@ -15,6 +15,7 @@ import {
   Repeat,
   CheckCircle2,
   Users,
+  History,
 } from 'lucide-react';
 import { KaamSetuLogo } from './KaamSetuLogo';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -75,6 +76,7 @@ useEffect(() => {
     { to: '/worker-dashboard', label: t('dashboard', 'Dashboard'), icon: LayoutDashboard, exact: true },
     { to: '/available-jobs', label: t('availableJobs', 'Available Jobs'), icon: Briefcase },
     { to: '/applied-jobs', label: t('appliedJobs', 'Applied Jobs'), icon: CheckCircle2 },
+    { to: '/job-history', label: t('jobHistory', 'Job History'), icon: History },
     { to: '/messages', label: t('messages', 'Messages'), icon: MessageSquare },
     { to: '/welfare-schemes', label: t('welfareSchemes', 'Welfare Schemes'), icon: Landmark },
     { to: '/worker-profile', label: t('workerProfile', 'Profile'), icon: User },
@@ -86,6 +88,7 @@ useEffect(() => {
     { to: '/find-workers', label: t('findWorkers', 'Find Workers'), icon: Users },
     { to: '/post-job', label: t('postAJob', 'Post a Job'), icon: PlusCircle },
     { to: '/emergency-hiring', label: t('emergencyHiring', 'Emergency Hiring'), icon: Zap, highlight: true },
+    { to: '/employer-job-history', label: t('postedJobHistory', 'Posted Job History'), icon: History },
     { to: '/employer-messages', label: t('messages', 'Messages'), icon: MessageSquare },
     { to: '/employer-profile', label: t('employerProfile', 'Profile'), icon: User },
     { to: '/employer-settings', label: t('settings', 'Settings'), icon: Settings },

@@ -100,6 +100,48 @@ export async function fetchAvailableWorkers(): Promise<AvailableWorker[]> {
     where("isAvailable", "==", true),
   );
   const snap = await getDocs(q);
+    // Fetch published ratings for all available workers in batches
+  const workerIds = snap.docs.map((workerDoc) => workerDoc.id);
+  const ratingTotals = new Map<string, { sum: number; count: number }>();
+
+  for (let i = 0; i < workerIds.length; i += 30) {
+    const batchIds = workerIds.slice(i, i + 30);
+
+    const ratingsQuery = query(
+      collection(db, "ratings"),
+      where("revieweeId", "in", batchIds),
+      where("status", "==", "published"),
+    );
+
+    const ratingsSnapshot = await getDocs(ratingsQuery);
+
+    ratingsSnapshot.docs.forEach((ratingDoc) => {
+      const data = ratingDoc.data();
+      const revieweeId = data.revieweeId;
+      const rating = Number(data.rating);
+
+      if (!Number.isFinite(rating) || rating < 1 || rating > 5) return;
+
+      const current = ratingTotals.get(revieweeId) || {
+        sum: 0,
+        count: 0,
+      };
+
+      current.sum += rating;
+      current.count += 1;
+
+      ratingTotals.set(revieweeId, current);
+    });
+  }
+
+  const workerAverages = new Map<string, number>();
+
+  ratingTotals.forEach((value, workerId) => {
+    workerAverages.set(
+      workerId,
+      Math.round((value.sum / value.count) * 10) / 10,
+    );
+  });
 
   const results: AvailableWorker[] = [];
 
@@ -159,7 +201,7 @@ export async function fetchAvailableWorkers(): Promise<AvailableWorker[]> {
       address: w.address || "",
       dailyRate,
       isAvailable: true,
-      rating: Number(w.rating) || 0,
+      rating: workerAverages.get(wDoc.id) ?? 0,
       totalJobs: Number(w.totalJobs) || 0,
       bio: w.bio || "",
       languages: Array.isArray(w.languages) ? w.languages : [],

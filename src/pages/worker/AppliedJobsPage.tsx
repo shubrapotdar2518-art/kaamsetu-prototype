@@ -11,6 +11,12 @@ import {
   RefreshCw,
   Building2,
   Calendar,
+  KeyRound,
+  QrCode,
+  Star,
+  History,
+  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../../layouts/DashboardLayout';
@@ -21,6 +27,8 @@ import {
   type WorkerAppliedJobItem,
 } from '../../services/jobService';
 import { ensureConversation } from '../../services/messageService';
+import { PaymentModal } from '../../components/PaymentModal';
+import { RatingModal } from '../../components/RatingModal';
 
 interface StatusBadgeConfig {
   label: string;
@@ -77,6 +85,14 @@ const mapStatusToConfig = (rawStatus?: string): StatusBadgeConfig => {
         description: 'Active job in progress',
       };
 
+    case 'completion_requested':
+      return {
+        label: 'Verification Pending',
+        badgeClass: 'bg-amber-50 text-amber-800 border-amber-300 font-bold',
+        dotColor: 'bg-amber-500 animate-ping',
+        description: 'Waiting for OTP verification from employer',
+      };
+
     case 'completed':
       return {
         label: 'Completed',
@@ -122,7 +138,16 @@ const formatApplicationDate = (seconds?: number | null): string => {
 };
 
 export const AppliedJobsPage: React.FC = () => {
-  const { userProfile, jobs, acceptJobOffer, rejectJobOffer, showToast } = useApp();
+  const {
+    userProfile,
+    jobs,
+    acceptJobOffer,
+    rejectJobOffer,
+    requestJobCompletion,
+    verifyJobCompletionOtp,
+    requestJobPayment,
+    showToast,
+  } = useApp();
   const { t } = useLanguage();
   const navigate = useNavigate();
 
@@ -131,6 +156,14 @@ export const AppliedJobsPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [busyOfferId, setBusyOfferId] = useState<string | null>(null);
+
+  // Workflow modals & states
+  const [confirmingCompletionApp, setConfirmingCompletionApp] = useState<WorkerAppliedJobItem | null>(null);
+  const [isRequestingCompletion, setIsRequestingCompletion] = useState(false);
+  const [otpInputs, setOtpInputs] = useState<Record<string, string>>({});
+  const [otpSubmittingId, setOtpSubmittingId] = useState<string | null>(null);
+  const [selectedPaymentApp, setSelectedPaymentApp] = useState<WorkerAppliedJobItem | null>(null);
+  const [selectedRatingApp, setSelectedRatingApp] = useState<WorkerAppliedJobItem | null>(null);
 
   const loadApplications = async () => {
     if (!userProfile.uid) {
@@ -229,15 +262,80 @@ export const AppliedJobsPage: React.FC = () => {
     setBusyOfferId(null);
   };
 
-  const statuses = ['All', 'Pending', 'Accepted', 'Offered', 'In Progress', 'Completed', 'Rejected'];
+  // Phase 2: Worker requests job completion
+  const handleConfirmRequestCompletion = async () => {
+    if (!confirmingCompletionApp) return;
+    setIsRequestingCompletion(true);
+    try {
+      const res = await requestJobCompletion(confirmingCompletionApp.jobId);
+      if (res) {
+        setApplications((prev) =>
+          prev.map((a) =>
+            a.id === confirmingCompletionApp.id
+              ? { ...a, status: 'completion_requested', completionAttempts: 0 }
+              : a,
+          ),
+        );
+      }
+      setConfirmingCompletionApp(null);
+    } finally {
+      setIsRequestingCompletion(false);
+    }
+  };
+
+  // Phase 3: Worker submits OTP shared by employer
+  const handleVerifyOtp = async (app: WorkerAppliedJobItem) => {
+    const code = (otpInputs[app.id] || '').trim();
+    if (!code || code.length !== 6) {
+      showToast('Please enter the complete 6-digit verification code.', 'error');
+      return;
+    }
+
+    setOtpSubmittingId(app.id);
+    try {
+      const ok = await verifyJobCompletionOtp(app.jobId, code);
+      if (ok) {
+        const updatedApp: WorkerAppliedJobItem = {
+          ...app,
+          status: 'completed',
+          paymentStatus: 'pending',
+        };
+        setApplications((prev) =>
+          prev.map((a) => (a.id === app.id ? updatedApp : a)),
+        );
+        // Clear entered input
+        setOtpInputs((prev) => {
+          const next = { ...prev };
+          delete next[app.id];
+          return next;
+        });
+        // Requirement 5: Automatically redirect/open worker to the payment section
+        setSelectedPaymentApp(updatedApp);
+      } else {
+        // Increment local attempt counter display
+        setApplications((prev) =>
+          prev.map((a) =>
+            a.id === app.id
+              ? { ...a, completionAttempts: (a.completionAttempts || 0) + 1 }
+              : a,
+          ),
+        );
+      }
+    } finally {
+      setOtpSubmittingId(null);
+    }
+  };
+
+  const statuses = ['All', 'In Progress', 'Pending', 'Accepted', 'Offered', 'Completed', 'Rejected'];
 
   const filteredApplications = useMemo(() => {
     return applications.filter((app) => {
       const cfg = mapStatusToConfig(app.status);
 
-      // Status filter
       if (statusFilter !== 'All') {
-        if (cfg.label.toLowerCase() !== statusFilter.toLowerCase()) {
+        if (statusFilter === 'Completed') {
+          if (app.status !== 'completed') return false;
+        } else if (cfg.label.toLowerCase() !== statusFilter.toLowerCase()) {
           return false;
         }
       }
@@ -255,6 +353,11 @@ export const AppliedJobsPage: React.FC = () => {
       return true;
     });
   }, [applications, statusFilter, searchTerm]);
+
+  const hasArchivedJobs = useMemo(
+    () => applications.some((a) => a.status === 'completed' && a.paymentStatus === 'paid'),
+    [applications],
+  );
 
   return (
     <DashboardLayout type="worker">
@@ -279,8 +382,17 @@ export const AppliedJobsPage: React.FC = () => {
             </p>
           </div>
 
-          {/* Refresh & Summary */}
+          {/* Action buttons */}
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => navigate('/job-history')}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-white border border-gray-200 text-xs font-bold text-gray-700 hover:text-[#15803D] hover:border-emerald-200 shadow-2xs transition-all cursor-pointer"
+            >
+              <History className="w-4 h-4 text-[#15803D]" />
+              <span>{t('jobHistory', 'Job History')}</span>
+            </button>
+
             <button
               type="button"
               onClick={loadApplications}
@@ -290,11 +402,27 @@ export const AppliedJobsPage: React.FC = () => {
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
-            <div className="px-3.5 py-2 rounded-2xl bg-white border border-gray-200 shadow-2xs text-xs font-semibold text-gray-600">
-              Total Applications: <span className="font-bold text-gray-900">{applications.length}</span>
-            </div>
           </div>
         </div>
+
+        {/* Phase 8 Banner: Link to Job History if completed jobs exist */}
+        {hasArchivedJobs && statusFilter === 'All' && (
+          <div className="p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-emerald-900 flex items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-[#15803D] shrink-0" />
+              <span>
+                Completed &amp; paid jobs have been moved to your <strong>Job History</strong>.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/job-history')}
+              className="font-bold underline hover:text-[#166534] shrink-0 cursor-pointer"
+            >
+              View Job History →
+            </button>
+          </div>
+        )}
 
         {/* Filters & Search */}
         <div className="space-y-3">
@@ -381,7 +509,11 @@ export const AppliedJobsPage: React.FC = () => {
             {filteredApplications.map((app) => {
               const statusCfg = mapStatusToConfig(app.status);
               const isBusy = busyOfferId === app.id;
-              const isOffered = app.status === 'offered';
+              const normalizedStatus = (app.status || '').toLowerCase().trim();
+const isOffered = normalizedStatus === 'offered';
+const isInProgress = normalizedStatus === 'in_progress';
+const isCompletionRequested = normalizedStatus === 'completion_requested';
+const isCompleted = normalizedStatus === 'completed';
 
               return (
                 <div
@@ -392,10 +524,18 @@ export const AppliedJobsPage: React.FC = () => {
                     {/* Top Status & Date Row */}
                     <div className="flex items-center justify-between gap-2 mb-3">
                       <span
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${statusCfg.badgeClass}`}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${
+                          isCompleted && app.paymentStatus === 'pending'
+                            ? 'bg-amber-50 text-amber-800 border-amber-300 font-bold'
+                            : statusCfg.badgeClass
+                        }`}
                       >
                         <span className={`w-1.5 h-1.5 rounded-full ${statusCfg.dotColor}`} />
-                        <span>{statusCfg.label}</span>
+                        <span>
+                          {isCompleted && app.paymentStatus === 'pending'
+                            ? 'Completed – Payment Pending'
+                            : statusCfg.label}
+                        </span>
                       </span>
 
                       <span className="text-[11px] font-medium text-gray-400 flex items-center gap-1 shrink-0">
@@ -409,22 +549,123 @@ export const AppliedJobsPage: React.FC = () => {
                       {app.jobTitle}
                     </h3>
 
-                    <p className="text-xs text-gray-600 font-medium flex items-center gap-1.5 mb-3">
+                    <p className="text-xs text-gray-600 font-medium flex items-center gap-1.5 mb-2">
                       <Building2 className="w-3.5 h-3.5 text-gray-400 shrink-0" />
                       <span className="truncate">{app.employerName}</span>
                     </p>
 
                     {/* Status note */}
                     <p className="text-[11px] text-gray-500 mb-3 bg-gray-50 rounded-xl px-2.5 py-1.5 border border-gray-100">
-                      {statusCfg.description}
+                      {isCompleted && app.paymentStatus === 'pending'
+                        ? 'Job completed! Waiting for employer to release payment.'
+                        : statusCfg.description}
                     </p>
+
+                    {/* PHASE 2 & 3: Completion Verification OTP interface */}
+                    {isCompletionRequested && (
+                      <div className="mb-3 p-3 rounded-2xl bg-amber-50/90 border border-amber-200 text-xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold text-amber-900 flex items-center gap-1.5">
+                            <KeyRound className="w-4 h-4 text-amber-600" />
+                            <span>{t('enterVerificationOtp', 'Enter Verification OTP')}</span>
+                          </span>
+                          <span className="text-[10px] font-bold text-amber-800 bg-amber-200/70 px-2 py-0.5 rounded-full">
+                            Attempts: {app.completionAttempts || 0}/5
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-amber-800 leading-tight">
+                          The employer received a 6-digit OTP in their notification. Enter it
+                          below to confirm job completion:
+                        </p>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            maxLength={6}
+                            placeholder="6-digit OTP"
+                            value={otpInputs[app.id] || ''}
+                            onChange={(e) =>
+                              setOtpInputs((prev) => ({
+                                ...prev,
+                                [app.id]: e.target.value.replace(/\D/g, ''),
+                              }))
+                            }
+                            className="flex-1 px-3 py-1.5 rounded-xl border border-amber-300 bg-white text-xs font-mono font-black tracking-widest text-center outline-none focus:ring-1 focus:ring-[#15803D]"
+                          />
+                          <button
+                            type="button"
+                            disabled={otpSubmittingId === app.id}
+                            onClick={() => handleVerifyOtp(app)}
+                            className="px-3.5 py-1.5 rounded-xl bg-[#15803D] hover:bg-[#166534] disabled:opacity-50 text-white text-xs font-bold transition-all shadow-xs cursor-pointer shrink-0"
+                          >
+                            {otpSubmittingId === app.id ? 'Checking...' : 'Verify OTP'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* PHASE 4: Payment section when completed and payment pending */}
+                    {isCompleted && app.paymentStatus === 'pending' && (
+                      <div className="mb-3 p-3 rounded-2xl bg-emerald-50/80 border border-emerald-200 text-xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-[#15803D] flex items-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Work Completed</span>
+                          </span>
+                          <span className="text-[11px] font-extrabold text-[#15803D]">
+                            Payout Due: ₹{app.wage}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-600">
+                          OTP verified successfully! Employer must confirm receipt of payment.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPaymentApp(app)}
+                          className="w-full py-1.5 px-3 rounded-xl border border-emerald-300 bg-white hover:bg-emerald-100 text-xs font-bold text-[#15803D] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <QrCode className="w-3.5 h-3.5" />
+                          <span>View Demo Payment / QR Code</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* PHASE 5: Payment paid - mutual rating trigger */}
+                    {isCompleted && app.paymentStatus === 'paid' && (
+                      <div className="mb-3 p-3 rounded-2xl bg-emerald-50/60 border border-emerald-200 text-xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold text-[#15803D] flex items-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Payment Confirmed ({app.paymentMethod === 'qr_demo' ? 'UPI Demo' : 'Cash'})</span>
+                          </span>
+                          <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
+                            ₹{app.wage}
+                          </span>
+                        </div>
+
+                        {!app.workerReviewSubmitted ? (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedRatingApp(app)}
+                            className="w-full py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                          >
+                            <Star className="w-3.5 h-3.5 fill-white" />
+                            <span>{t('rateEmployer', 'Rate Employer')}</span>
+                          </button>
+                        ) : (
+                          <div className="text-[11px] font-bold text-emerald-800 bg-emerald-50 py-1.5 px-3 rounded-xl border border-emerald-200 flex items-center gap-1.5 justify-center">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-[#15803D]" />
+                            <span>✓ You Rated</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div>
                     {/* Location & Wage */}
                     <div className="pt-3 border-t border-gray-100 flex items-center justify-between gap-2 mb-3">
                       <div className="flex items-center gap-1 text-xs text-gray-600 font-medium">
-                        <MapPin className="w-3.5 h-3.5 text-[#F97316] shrink-0" />
+                        <MapPin className="w-3.5 h-3.5 text-[#F97316]" />
                         <span className="truncate max-w-[140px] sm:max-w-[170px]">
                           {app.location}
                         </span>
@@ -470,6 +711,25 @@ export const AppliedJobsPage: React.FC = () => {
                           <span>Chat with Employer</span>
                         </button>
                       </div>
+                    ) : isInProgress ? (
+                      <div className="space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingCompletionApp(app)}
+                          className="w-full py-2 px-3 rounded-xl bg-[#15803D] hover:bg-[#166534] text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>{t('markJobCompleted', 'Mark Job as Completed')}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMessageEmployer(app)}
+                          className="w-full py-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-xs font-bold text-[#15803D] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5" />
+                          <span>Chat with Employer</span>
+                        </button>
+                      </div>
                     ) : (
                       <button
                         type="button"
@@ -485,6 +745,90 @@ export const AppliedJobsPage: React.FC = () => {
               );
             })}
           </div>
+        )}
+
+        {/* Phase 2: Confirmation Dialog for Completion Request */}
+        {confirmingCompletionApp && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-gray-100">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-[#15803D] flex items-center justify-center mb-4">
+                <CheckCircle2 className="w-6 h-6" />
+              </div>
+              <h3 className="text-lg font-extrabold text-gray-900 mb-1">
+                {t('confirmCompletion', 'Confirm Job Completion')}
+              </h3>
+              <p className="text-xs text-gray-500 mb-4 leading-relaxed">
+                Have you completed all work for{' '}
+                <strong className="text-gray-900">"{confirmingCompletionApp.jobTitle}"</strong>?
+                Confirming will generate a 6-digit demo verification OTP sent to your employer (
+                <strong>{confirmingCompletionApp.employerName}</strong>). You will then enter that
+                code here to complete the verification.
+              </p>
+              <div className="flex gap-2 justify-end">
+                <button
+                  type="button"
+                  disabled={isRequestingCompletion}
+                  onClick={() => setConfirmingCompletionApp(null)}
+                  className="px-4 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-600 hover:bg-gray-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isRequestingCompletion}
+                  onClick={handleConfirmRequestCompletion}
+                  className="px-5 py-2 rounded-xl bg-[#15803D] hover:bg-[#166534] disabled:opacity-50 text-white text-xs font-bold shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isRequestingCompletion ? 'Sending OTP...' : 'Send OTP to Employer'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Payment Modal for Worker */}
+        {selectedPaymentApp && (
+          <PaymentModal
+            isOpen={!!selectedPaymentApp}
+            onClose={() => setSelectedPaymentApp(null)}
+            jobId={selectedPaymentApp.jobId}
+            workerId={userProfile.uid || ''}
+            employerId={selectedPaymentApp.employerId}
+            workerName={userProfile.name || 'Worker'}
+            employerName={selectedPaymentApp.employerName}
+            jobTitle={selectedPaymentApp.jobTitle}
+            wage={selectedPaymentApp.wage}
+            userRole="worker"
+            initialMethod={selectedPaymentApp.paymentMethod}
+            paymentStatus={selectedPaymentApp.paymentStatus}
+            onSelectPaymentMethod={async (method) => {
+              const success = await requestJobPayment(selectedPaymentApp.jobId, method);
+              if (success) {
+                setApplications((prev) =>
+                  prev.map((a) =>
+                    a.id === selectedPaymentApp.id
+                      ? { ...a, paymentMethod: method, paymentStatus: 'pending' }
+                      : a,
+                  ),
+                );
+              }
+            }}
+          />
+        )}
+
+        {/* Rating Modal for Worker -> Employer */}
+        {selectedRatingApp && (
+          <RatingModal
+            isOpen={!!selectedRatingApp}
+            onClose={() => setSelectedRatingApp(null)}
+            jobId={selectedRatingApp.jobId}
+            jobTitle={selectedRatingApp.jobTitle}
+            revieweeId={selectedRatingApp.employerId}
+            revieweeName={selectedRatingApp.employerName}
+            revieweeIsWorker={false}
+            reviewerId={userProfile.uid || ''}
+            onRatingSubmitted={loadApplications}
+          />
         )}
       </div>
     </DashboardLayout>

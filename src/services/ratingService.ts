@@ -6,6 +6,7 @@ import {
   setDoc,
   getDoc,
   getDocs,
+    runTransaction,
   collection,
   query,
   where,
@@ -15,12 +16,26 @@ import {
 import { db } from "../firebase/firebaseClient";
 import { createNotification } from "./notificationService";
 
+export interface WorkerRatingCategories {
+  workQuality: number;
+  punctuality: number;
+  skills: number;
+}
+
+export interface EmployerRatingCategories {
+  employerBehaviour: number;
+  communication: number;
+  paymentExperience: number;
+}
+
 export interface FirestoreRating {
   id: string;
   jobId: string;
   reviewerId: string;
   revieweeId: string;
+  reviewerName?: string;
   rating: number;
+  categories?: WorkerRatingCategories | EmployerRatingCategories | null;
   comment: string;
   status: string;
   createdAt?: { seconds: number } | null;
@@ -41,51 +56,127 @@ export async function submitRating(
   rating: number,
   comment = "",
   jobTitle = "a job",
+  categories?: WorkerRatingCategories | EmployerRatingCategories | null,
+  customReviewerName?: string,
 ): Promise<void> {
   if (rating < 1 || rating > 5) {
     throw new Error("Rating must be between 1 and 5.");
   }
 
-  const ratingId = `${jobId}_${reviewerId}`;
-  const existing = await getDoc(doc(db, "ratings", ratingId));
-  if (existing.exists()) {
-    throw new Error("You have already rated this job.");
+  // 1. Enforce that only participants can rate and only after payment is confirmed
+  const workerId = revieweeIsWorker ? revieweeId : reviewerId;
+  const employerId = revieweeIsWorker ? reviewerId : revieweeId;
+  const applicationId = `${jobId}_${workerId}`;
+
+    const appSnap = await getDoc(doc(db, "applications", applicationId));
+
+  // A valid application must exist.
+  if (!appSnap.exists()) {
+    throw new Error("No valid job application found for this rating.");
   }
 
-  await setDoc(doc(db, "ratings", ratingId), {
-    jobId,
-    reviewerId,
-    revieweeId,
-    rating,
-    comment,
-    status: "published",
-    createdAt: serverTimestamp(),
+  const appData = appSnap.data();
+
+  // Only the actual employer and worker can rate each other.
+  if (appData.workerId !== workerId || appData.employerId !== employerId) {
+    throw new Error("You are not authorized to rate this job.");
+  }
+
+  // Reviews are allowed only after job completion and payment.
+  if (appData.status !== "completed" || appData.paymentStatus !== "paid") {
+    throw new Error("Reviews are only unlocked after job completion and payment.");
+  }
+
+  // Prevent duplicate reviews in the same direction.
+  if (revieweeIsWorker && appData.employerReviewSubmitted) {
+    throw new Error("You have already submitted a review for this worker.");
+  }
+
+  if (!revieweeIsWorker && appData.workerReviewSubmitted) {
+    throw new Error("You have already submitted a review for this employer.");
+  }
+
+    const ratingId = `${jobId}_${reviewerId}_${revieweeId}`;
+  const ratingRef = doc(db, "ratings", ratingId);
+  const legacyRatingRef = doc(db, "ratings", `${jobId}_${reviewerId}`);
+  const applicationRef = doc(db, "applications", applicationId);
+
+  let reviewerName = customReviewerName;
+
+  if (!reviewerName) {
+    try {
+      const reviewerSnap = await getDoc(doc(db, "users", reviewerId));
+      reviewerName = reviewerSnap.exists()
+        ? reviewerSnap.data().name ?? "A user"
+        : "A user";
+    } catch {
+      reviewerName = "A user";
+    }
+  }
+
+  const finalReviewerName = reviewerName || "A user";
+
+  await runTransaction(db, async (transaction) => {
+    const currentApp = await transaction.get(applicationRef);
+    const existingRating = await transaction.get(ratingRef);
+    const existingLegacyRating = await transaction.get(legacyRatingRef);
+
+    if (!currentApp.exists()) {
+      throw new Error("No valid job application found.");
+    }
+
+    if (existingRating.exists() || existingLegacyRating.exists()) {
+      throw new Error("You have already rated this job.");
+    }
+
+    const currentData = currentApp.data();
+
+    if (
+      currentData.workerId !== workerId ||
+      currentData.employerId !== employerId
+    ) {
+      throw new Error("You are not authorized to rate this job.");
+    }
+
+    if (
+      currentData.status !== "completed" ||
+      currentData.paymentStatus !== "paid"
+    ) {
+      throw new Error("Reviews require a completed and paid job.");
+    }
+
+    const reviewFlag = revieweeIsWorker
+      ? "employerReviewSubmitted"
+      : "workerReviewSubmitted";
+
+    if (currentData[reviewFlag]) {
+      throw new Error("You have already submitted this review.");
+    }
+
+    transaction.set(ratingRef, {
+      jobId,
+      workerId,
+      employerId,
+      reviewerId,
+      revieweeId,
+      reviewerName: finalReviewerName,
+      rating,
+      categories: categories || null,
+      comment,
+      status: "published",
+      createdAt: serverTimestamp(),
+    });
+
+    transaction.update(applicationRef, {
+      [reviewFlag]: true,
+      updatedAt: serverTimestamp(),
+    });
   });
 
-  // Recalculate and store the reviewee's average rating
-  const newAverage = await calculateAverageRating(revieweeId);
-  const collectionName = revieweeIsWorker ? "workers" : "employers";
-  const profileSnap = await getDoc(doc(db, collectionName, revieweeId));
-  const totalJobsField = revieweeIsWorker ? "totalJobs" : "totalJobsPosted";
-  const currentTotal = profileSnap.exists()
-    ? ((profileSnap.data() as any)[totalJobsField] ?? 0)
-    : 0;
-
-  await updateDoc(doc(db, collectionName, revieweeId), {
-    rating: newAverage,
-    [totalJobsField]: currentTotal + 1,
-    updatedAt: serverTimestamp(),
-  });
-
-   // 🔔 Let the reviewee know they got rated
-  const reviewerSnap = await getDoc(doc(db, "users", reviewerId));
-  const reviewerName = reviewerSnap.exists()
-    ? reviewerSnap.data().name ?? "A user"
-    : "A user";
-
+    // 🔔 Let the reviewee know they got rated
   await createNotification(
     revieweeId,
-    "job_completed",
+    "rating_received",
     "You received a rating",
     `${reviewerName} rated you ${rating}/5 for "${jobTitle}".`,
     jobId,
@@ -129,7 +220,16 @@ export async function calculateAverageRating(userId: string): Promise<number> {
 export async function hasRatedJob(
   jobId: string,
   reviewerId: string,
+  revieweeId?: string,
 ): Promise<boolean> {
-  const snap = await getDoc(doc(db, "ratings", `${jobId}_${reviewerId}`));
-  return snap.exists();
+  if (revieweeId) {
+    const snap = await getDoc(
+      doc(db, "ratings", `${jobId}_${reviewerId}_${revieweeId}`),
+    );
+    if (snap.exists()) return true;
+  }
+  const snapLegacy = await getDoc(
+    doc(db, "ratings", `${jobId}_${reviewerId}`),
+  );
+  return snapLegacy.exists();
 }

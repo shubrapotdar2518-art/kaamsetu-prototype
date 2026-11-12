@@ -22,6 +22,7 @@ import { ChatAssistantPage } from "./pages/worker/ChatAssistantPage";
 import { WelfareSchemesPage } from "./pages/worker/WelfareSchemesPage";
 import { MessagesPage } from "./pages/worker/MessagesPage";
 import { WorkerProfilePage } from "./pages/worker/WorkerProfilePage";
+import { JobHistoryPage } from "./pages/worker/JobHistoryPage";
 
 import { EmployerDashboardPage } from "./pages/employer/EmployerDashboardPage";
 import { FindWorkersPage } from "./pages/employer/FindWorkersPage";
@@ -29,6 +30,7 @@ import { PostJobPage } from "./pages/employer/PostJobPage";
 import { EmergencyHiringPage } from "./pages/employer/EmergencyHiringPage";
 import { EmployerMessagesPage } from "./pages/employer/EmployerMessagesPage";
 import { EmployerProfilePage } from "./pages/employer/EmployerProfilePage";
+import { EmployerJobHistoryPage } from "./pages/employer/EmployerJobHistoryPage";
 import { SettingsPage } from "./pages/common/SettingsPage";
 
 const W = (el: React.ReactNode) => (
@@ -69,6 +71,7 @@ export function App() {
             />
             <Route path="/available-jobs" element={W(<AvailableJobsPage />)} />
             <Route path="/applied-jobs" element={W(<AppliedJobsPage />)} />
+            <Route path="/job-history" element={W(<JobHistoryPage />)} />
             <Route path="/chat" element={W(<ChatAssistantPage />)} />
             <Route
               path="/welfare-schemes"
@@ -99,6 +102,10 @@ export function App() {
             <Route
               path="/employer-profile"
               element={E(<EmployerProfilePage />)}
+            />
+            <Route
+              path="/employer-job-history"
+              element={E(<EmployerJobHistoryPage />)}
             />
             <Route
               path="/employer-settings"

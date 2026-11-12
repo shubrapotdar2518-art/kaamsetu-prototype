@@ -1,9 +1,13 @@
-import React, { useState } from 'react';
-import { User, Phone, MapPin, ShieldCheck, Edit3, ArrowLeft, Briefcase } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { User, Phone, MapPin, ShieldCheck, Edit3, ArrowLeft, Briefcase, Star, MessageSquare } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../../layouts/DashboardLayout';
 import { useApp } from '../../context/AppContext';
 import { useLanguage } from '../../i18n/LanguageContext';
+import {
+  getRatingsForUser,
+  type FirestoreRating,
+} from '../../services/ratingService';
 
 export const EmployerProfilePage: React.FC = () => {
   const { userProfile, updateUserProfile, showToast, employerJobPosts } = useApp();
@@ -16,6 +20,25 @@ export const EmployerProfilePage: React.FC = () => {
   const [address, setAddress] = useState(userProfile.address || '');
   const [landmark, setLandmark] = useState(userProfile.landmark || '');
   const [city, setCity] = useState(userProfile.city || '');
+
+  // Ratings & reviews state
+  const [reviews, setReviews] = useState<FirestoreRating[]>([]);
+  const [loadingReviews, setLoadingReviews] = useState(true);
+
+  useEffect(() => {
+    if (!userProfile.uid) return;
+    setLoadingReviews(true);
+    getRatingsForUser(userProfile.uid)
+      .then(setReviews)
+      .catch((err) => console.error('Failed to load employer reviews:', err))
+      .finally(() => setLoadingReviews(false));
+  }, [userProfile.uid]);
+
+  const averageRating = useMemo(() => {
+    if (reviews.length === 0) return 0;
+    const sum = reviews.reduce((acc, r) => acc + (r.rating || 0), 0);
+    return Math.round((sum / reviews.length) * 10) / 10;
+  }, [reviews]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,8 +105,14 @@ export const EmployerProfilePage: React.FC = () => {
                 <span className="font-semibold text-gray-700 bg-gray-100 px-2.5 py-1 rounded-xl">
                   💼 {employerJobPosts.length} Active Posts
                 </span>
-                <span className="font-bold text-[#15803D] bg-emerald-50 px-2.5 py-1 rounded-xl">
-                  ⭐ 4.9 Rating
+                <span className="font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-xl flex items-center gap-1">
+                  <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                  <span>{averageRating > 0 ? `${averageRating} Rating` : 'New Employer'}</span>
+                  {reviews.length > 0 && (
+                    <span className="text-[10px] text-amber-600 font-normal">
+                      ({reviews.length})
+                    </span>
+                  )}
                 </span>
               </div>
 
@@ -177,6 +206,85 @@ export const EmployerProfilePage: React.FC = () => {
             </div>
           </form>
         )}
+
+        {/* Worker Feedback & Reviews Section */}
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-base sm:text-lg font-extrabold text-gray-900 flex items-center gap-2">
+                <Star className="w-5 h-5 fill-amber-400 text-amber-400" />
+                <span>Worker Reviews &amp; Ratings ({reviews.length})</span>
+              </h3>
+              <p className="text-xs text-gray-500">
+                Verified feedback submitted by workers who completed jobs for you
+              </p>
+            </div>
+            {reviews.length > 0 && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 font-extrabold text-sm">
+                <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
+                <span>{averageRating} / 5.0</span>
+              </div>
+            )}
+          </div>
+
+          {loadingReviews ? (
+            <p className="text-xs text-gray-400">Loading worker reviews...</p>
+          ) : reviews.length === 0 ? (
+            <div className="p-6 rounded-2xl bg-gray-50/70 border border-dashed border-gray-200 text-center">
+              <Star className="w-6 h-6 text-gray-300 mx-auto mb-1.5" />
+              <p className="text-xs font-bold text-gray-700">No worker reviews yet</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                Feedback from hired daily wage workers will appear here once jobs are verified and paid.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+              {reviews.map((r) => {
+                const cats = r.categories as any;
+                return (
+                  <div
+                    key={r.id}
+                    className="p-4 rounded-2xl border border-gray-100 bg-gray-50/60 space-y-2 text-xs"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-gray-900">
+                        {r.reviewerName || 'Daily Worker'}
+                      </span>
+                      <div className="flex items-center gap-0.5 text-amber-500 font-bold">
+                        <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                        <span>{r.rating}/5</span>
+                      </div>
+                    </div>
+                    {r.comment && (
+                      <p className="text-gray-700 italic leading-relaxed">
+                        "{r.comment}"
+                      </p>
+                    )}
+                    {cats && (
+                      <div className="flex flex-wrap gap-1.5 pt-1 text-[10px]">
+                        {cats.employerBehaviour && (
+                          <span className="px-2 py-0.5 rounded-md bg-white border border-gray-200 text-gray-600 font-semibold">
+                            Behaviour: {cats.employerBehaviour}★
+                          </span>
+                        )}
+                        {cats.communication && (
+                          <span className="px-2 py-0.5 rounded-md bg-white border border-gray-200 text-gray-600 font-semibold">
+                            Communication: {cats.communication}★
+                          </span>
+                        )}
+                        {cats.paymentExperience && (
+                          <span className="px-2 py-0.5 rounded-md bg-white border border-gray-200 text-gray-600 font-semibold">
+                            Payout Experience: {cats.paymentExperience}★
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </DashboardLayout>
   );

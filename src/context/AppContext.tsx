@@ -27,13 +27,19 @@ import {
   fetchEmployerJobs,
   applyToJobDoc,
   fetchMyAppliedJobIds,
+  fetchWorkerCompletedJobIds,
   fetchEmployerApplications,
   updateApplicationStatusDoc,
   sendJobOfferDoc,
   sendDirectJobOfferDoc,
   acceptJobOfferDoc,
   rejectJobOfferDoc,
+  requestJobCompletionDoc,
+  verifyJobCompletionOtpDoc,
+  requestJobPaymentDoc,
+  confirmJobPaymentDoc,
   type FirestoreJob,
+  type CompletionRequestResult,
 } from "../services/jobService";
 import { findBestFAQAnswer } from "../services/faqService";
 import { computeMatchScore } from "../algorithms/recommendation";
@@ -69,9 +75,18 @@ export interface JobApplication {
   phone: string;
   rating: number;
   status: "New" | "Shortlisted" | "Hired" | "Rejected" | "Offered" | "Declined";
+  rawStatus?: string;
+  wage?: number;
   appliedFor: string;
   appliedDate: string;
   avatar: string;
+  completionOtp?: string;
+  completionOtpExpiry?: { seconds: number } | number | null;
+  completionAttempts?: number;
+  paymentStatus?: "pending" | "paid" | null;
+  paymentMethod?: "qr_demo" | "cash" | null;
+  workerReviewSubmitted?: boolean;
+  employerReviewSubmitted?: boolean;
 }
 
 export interface EmployerJobPost {
@@ -166,6 +181,17 @@ interface AppContextType {
   sendDirectJobOffer: (jobId: string, workerId: string) => Promise<boolean>;
   acceptJobOffer: (applicationId: string) => Promise<boolean>;
   rejectJobOffer: (applicationId: string) => Promise<boolean>;
+  requestJobCompletion: (jobId: string) => Promise<CompletionRequestResult | null>;
+  verifyJobCompletionOtp: (jobId: string, otp: string) => Promise<boolean>;
+  requestJobPayment: (
+    jobId: string,
+    paymentMethod: "qr_demo" | "cash",
+  ) => Promise<boolean>;
+  confirmJobPayment: (
+    jobId: string,
+    workerId: string,
+    paymentMethod: "qr_demo" | "cash",
+  ) => Promise<boolean>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -357,7 +383,7 @@ const timeAgo = (seconds?: number | null): string => {
 
 const statusToUi = (s: string): JobApplication["status"] => {
   if (s === "accepted") return "Shortlisted";
-  if (s === "in_progress" || s === "completed") return "Hired";
+  if (s === "in_progress" || s === "completed" || s === "completion_requested") return "Hired";
   if (s === "rejected") return "Rejected";
   if (s === "offered") return "Offered";
   if (s === "offer_declined") return "Declined";
@@ -436,9 +462,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
     try {
       if (userRole === "worker") {
-        const [open, appliedIds] = await Promise.all([
+        const [open, appliedIds, completedPaidIds] = await Promise.all([
           fetchOpenJobs(),
           fetchMyAppliedJobIds(uid),
+          fetchWorkerCompletedJobIds(uid),
         ]);
 
         const w = workerDoc;
@@ -506,10 +533,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
           };
         });
 
-        // Combine dummy + real jobs, highest match first
-        const combined = [...scoredDummyJobs, ...mapped].sort(
-          (a, b) => (b.matchPercentage ?? 0) - (a.matchPercentage ?? 0),
-        );
+        // Combine dummy + real jobs, exclude completed & paid jobs, highest match first
+        const completedSet = new Set(completedPaidIds);
+        const combined = [...scoredDummyJobs, ...mapped]
+          .filter((j) => !completedSet.has(j.id))
+          .sort((a, b) => (b.matchPercentage ?? 0) - (a.matchPercentage ?? 0));
         setJobs(combined);
       } else {
         // Employer: load their jobs and applications
@@ -518,9 +546,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
           fetchEmployerApplications(uid),
         ]);
 
-        if (mine.length > 0) {
+        const activePosts = mine.filter((j) => j.status !== "completed");
+        if (activePosts.length > 0) {
           setEmployerJobPosts(
-            mine.map((j) => ({
+            activePosts.map((j) => ({
               id: j.id,
               title: j.title,
               trade: j.trade,
@@ -539,30 +568,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         }
 
         if (apps.length > 0) {
-  const realApplications: JobApplication[] = apps.map((a) => ({
-    id: a.id,
-    workerId: a.workerId,
-    employerId: a.employerId,
-    jobId: a.jobId,
-    workerName: a.workerName,
-    trade: a.workerTrade,
-    experience: `${a.workerExperience} Years Experience`,
-    location: a.workerLocation,
-    phone: a.workerPhone,
-    rating: 0,
-    status: statusToUi(a.status),
-    appliedFor: a.jobTitle,
-    appliedDate: timeAgo(a.appliedAt?.seconds),
-    avatar: "",
-  }));
+          const realApplications: JobApplication[] = apps.map((a) => ({
+            id: a.id,
+            workerId: a.workerId,
+            employerId: a.employerId,
+            jobId: a.jobId,
+            workerName: a.workerName,
+            trade: a.workerTrade,
+            experience: `${a.workerExperience} Years Experience`,
+            location: a.workerLocation,
+            phone: a.workerPhone,
+            rating: 0,
+            status: statusToUi(a.status),
+            rawStatus: a.status,
+            wage: a.wage,
+            completionOtp: a.completionOtp,
+            completionOtpExpiry: a.completionOtpExpiry,
+            completionAttempts: a.completionAttempts,
+            paymentStatus: a.paymentStatus,
+            paymentMethod: a.paymentMethod,
+            workerReviewSubmitted: a.workerReviewSubmitted,
+            employerReviewSubmitted: a.employerReviewSubmitted,
+            appliedFor: a.jobTitle,
+            appliedDate: timeAgo(a.appliedAt?.seconds),
+            avatar: "",
+          }));
 
-    // Show real applications first (newest on top), then the demo ones
-  const dummyIds = new Set(INITIAL_APPLICATIONS.map((d) => d.id));
-  setApplications([
-    ...realApplications.filter((a) => !dummyIds.has(a.id)),
-    ...INITIAL_APPLICATIONS,
-  ]);
-}
+          // Show real applications first (newest on top), then the demo ones
+          const dummyIds = new Set(INITIAL_APPLICATIONS.map((d) => d.id));
+          setApplications([
+            ...realApplications.filter((a) => !dummyIds.has(a.id)),
+            ...INITIAL_APPLICATIONS,
+          ]);
+        }
       }
     } catch (err) {
       console.error("refreshJobs failed:", err);
@@ -895,6 +933,107 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  // ─── Job completion, OTP & Payment actions ──────────────────────────────────
+
+  const requestJobCompletion = async (
+    jobId: string,
+  ): Promise<CompletionRequestResult | null> => {
+    if (!userProfile.uid) {
+      showToast("Please login first.", "error");
+      return null;
+    }
+
+    try {
+      const res = await requestJobCompletionDoc(jobId, userProfile.uid);
+      showToast("Completion verification requested! OTP has been sent to employer.");
+      await refreshJobs();
+      return res;
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Could not request completion.",
+        "error",
+      );
+      return null;
+    }
+  };
+
+  const verifyJobCompletionOtp = async (
+    jobId: string,
+    otp: string,
+  ): Promise<boolean> => {
+    if (!userProfile.uid) {
+      showToast("Please login first.", "error");
+      return false;
+    }
+
+    try {
+      const res = await verifyJobCompletionOtpDoc(jobId, userProfile.uid, otp);
+      showToast(res.message);
+      await refreshJobs();
+      return true;
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Verification failed.",
+        "error",
+      );
+      return false;
+    }
+  };
+
+  const requestJobPayment = async (
+    jobId: string,
+    paymentMethod: "qr_demo" | "cash",
+  ): Promise<boolean> => {
+    if (!userProfile.uid) {
+      showToast("Please login first.", "error");
+      return false;
+    }
+
+    try {
+      await requestJobPaymentDoc(jobId, userProfile.uid, paymentMethod);
+      showToast(
+        `Payment request (${paymentMethod === "qr_demo" ? "UPI / QR Demo" : "Cash in Hand"}) sent to employer!`,
+      );
+      await refreshJobs();
+      return true;
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Failed to request payment.",
+        "error",
+      );
+      return false;
+    }
+  };
+
+  const confirmJobPayment = async (
+    jobId: string,
+    workerId: string,
+    paymentMethod: "qr_demo" | "cash",
+  ): Promise<boolean> => {
+    if (!userProfile.uid) {
+      showToast("Please login first.", "error");
+      return false;
+    }
+
+    try {
+      await confirmJobPaymentDoc(
+        jobId,
+        workerId,
+        userProfile.uid,
+        paymentMethod,
+      );
+      showToast("Payment confirmed! Mutual ratings are now unlocked.");
+      await refreshJobs();
+      return true;
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Payment confirmation failed.",
+        "error",
+      );
+      return false;
+    }
+  };
+
   // ─── Chatbot ──────────────────────────────────────────────────────────────
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -1001,6 +1140,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         sendDirectJobOffer,
         acceptJobOffer,
         rejectJobOffer,
+        requestJobCompletion,
+        verifyJobCompletionOtp,
+        requestJobPayment,
+        confirmJobPayment,
       }}
     >
       {children}

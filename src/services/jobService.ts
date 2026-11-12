@@ -120,6 +120,26 @@ export async function fetchMyAppliedJobIds(
   return snap.docs.map((d) => d.data().jobId as string);
 }
 
+export async function fetchWorkerCompletedJobIds(
+  workerId: string,
+): Promise<string[]> {
+  try {
+    const snap = await getDocs(
+      query(
+        collection(db, "applications"),
+        where("workerId", "==", workerId),
+        where("status", "==", "completed"),
+      ),
+    );
+    return snap.docs
+      .filter((d) => d.data().paymentStatus === "paid")
+      .map((d) => d.data().jobId as string);
+  } catch (err) {
+    console.error("fetchWorkerCompletedJobIds error:", err);
+    return [];
+  }
+}
+
 export interface WorkerAppliedJobItem {
   id: string;
   jobId: string;
@@ -132,6 +152,15 @@ export interface WorkerAppliedJobItem {
   appliedAt?: { seconds: number } | null;
   trade?: string;
   description?: string;
+  completionOtpExpiry?: { seconds: number } | number | null;
+  completionAttempts?: number;
+  paymentStatus?: "pending" | "paid" | null;
+  paymentMethod?: "qr_demo" | "cash" | null;
+  completionRequestedAt?: { seconds: number } | null;
+  completionVerifiedAt?: { seconds: number } | null;
+  paymentConfirmedAt?: { seconds: number } | null;
+  workerReviewSubmitted?: boolean;
+  employerReviewSubmitted?: boolean;
 }
 
 export async function fetchWorkerApplications(
@@ -190,6 +219,15 @@ export async function fetchWorkerApplications(
       appliedAt: a.appliedAt ?? null,
       trade,
       description,
+      completionOtpExpiry: a.completionOtpExpiry ?? null,
+      completionAttempts: a.completionAttempts ?? 0,
+      paymentStatus: a.paymentStatus ?? null,
+      paymentMethod: a.paymentMethod ?? null,
+      completionRequestedAt: a.completionRequestedAt ?? null,
+      completionVerifiedAt: a.completionVerifiedAt ?? null,
+      paymentConfirmedAt: a.paymentConfirmedAt ?? null,
+      workerReviewSubmitted: !!a.workerReviewSubmitted,
+      employerReviewSubmitted: !!a.employerReviewSubmitted,
     });
   }
 
@@ -211,6 +249,17 @@ export interface FirestoreApplication {
   workerLocation: string;
   workerTrade: string;
   workerExperience: number;
+  wage?: number;
+  completionOtp?: string;
+  completionOtpExpiry?: { seconds: number } | number | null;
+  completionAttempts?: number;
+  paymentStatus?: "pending" | "paid" | null;
+  paymentMethod?: "qr_demo" | "cash" | null;
+  completionRequestedAt?: { seconds: number } | null;
+  completionVerifiedAt?: { seconds: number } | null;
+  paymentConfirmedAt?: { seconds: number } | null;
+  workerReviewSubmitted?: boolean;
+  employerReviewSubmitted?: boolean;
 }
 
 export async function fetchEmployerApplications(
@@ -231,6 +280,17 @@ export async function fetchEmployerApplications(
     ]);
     const u = userSnap.data() ?? {};
     const w = workerSnap.data() ?? {};
+
+    let wage = 0;
+    try {
+      const jobSnap = await getDoc(doc(db, "jobs", a.jobId));
+      if (jobSnap.exists()) {
+        wage = jobSnap.data().wage || 0;
+      }
+    } catch {
+      // fallback
+    }
+
     results.push({
       id: d.id,
       jobId: a.jobId,
@@ -244,6 +304,17 @@ export async function fetchEmployerApplications(
       workerLocation: u.location ?? "",
       workerTrade: w.primarySkill ?? "",
       workerExperience: w.experience ?? 0,
+      wage,
+      completionOtp: a.completionOtp ?? "",
+      completionOtpExpiry: a.completionOtpExpiry ?? null,
+      completionAttempts: a.completionAttempts ?? 0,
+      paymentStatus: a.paymentStatus ?? null,
+      paymentMethod: a.paymentMethod ?? null,
+      completionRequestedAt: a.completionRequestedAt ?? null,
+      completionVerifiedAt: a.completionVerifiedAt ?? null,
+      paymentConfirmedAt: a.paymentConfirmedAt ?? null,
+      workerReviewSubmitted: !!a.workerReviewSubmitted,
+      employerReviewSubmitted: !!a.employerReviewSubmitted,
     });
   }
   return results.sort(
@@ -355,7 +426,7 @@ export async function sendDirectJobOfferDoc(
   const jobSnap = await getDoc(jobRef);
   if (!jobSnap.exists()) throw new Error("Job not found.");
 
-  const j = jobSnap.data();
+  const j = jobSnap.data() as any;
   if (j.employerId !== employerId) {
     throw new Error("You can only send offers for your own jobs.");
   }
@@ -561,4 +632,695 @@ export async function getApplicationStatusDoc(
     console.error("getApplicationStatusDoc failed:", err);
     return null;
   }
+}
+
+// ==========================================
+// 🚀 JOB COMPLETION, OTP & PAYMENT WORKFLOW
+// ==========================================
+
+/**
+ * DEMO LIMITATION NOTICE:
+ * In a production architecture, OTP generation and verification would be executed
+ * on a secure server/Firebase Cloud Function with SMS gateway integration and
+ * server-side rate limiting. For this college project demonstration, the workflow
+ * uses Firestore coordination with a 10-minute expiry timestamp and a 5-attempt limit.
+ */
+
+export interface CompletionRequestResult {
+  applicationId: string;
+  otp: string;
+  expirySeconds: number;
+}
+
+/**
+ * Worker requests job completion for a job that is in_progress.
+ * Generates a random 6-digit OTP, sets 10-minute expiry, sets status to completion_requested,
+ * and notifies the employer with the OTP.
+ */
+export async function requestJobCompletionDoc(
+  jobId: string,
+  workerId: string,
+): Promise<CompletionRequestResult> {
+  const applicationId = `${jobId}_${workerId}`;
+  const appRef = doc(db, "applications", applicationId);
+  const appSnap = await getDoc(appRef);
+
+  if (!appSnap.exists()) {
+    throw new Error("Job application not found.");
+  }
+
+  const appData = appSnap.data();
+  if (appData.workerId !== workerId) {
+    throw new Error("You can only request completion for your own jobs.");
+  }
+
+  if (appData.status === "completed") {
+    throw new Error("This job is already completed.");
+  }
+
+  if (appData.status !== "in_progress" && appData.status !== "completion_requested") {
+    throw new Error("Job must be in progress before requesting completion.");
+  }
+
+  // Generate random 6-digit demo OTP
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  // 10 minutes expiry timestamp (seconds)
+  const expirySeconds = Math.floor(Date.now() / 1000) + 10 * 60;
+
+  await updateDoc(appRef, {
+    status: "completion_requested",
+    completionOtp: otp,
+    completionOtpExpiry: expirySeconds,
+    completionAttempts: 0,
+    completionRequestedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  // Fetch worker and job details for notifications
+  let workerName = "Worker";
+  try {
+    const workerSnap = await getDoc(doc(db, "users", workerId));
+    if (workerSnap.exists()) {
+      workerName = workerSnap.data().name || workerName;
+    }
+  } catch {
+    // fallback
+  }
+
+  const jobTitle = appData.jobTitle || "Job";
+
+  // 🔔 Notify employer with the OTP
+  await createNotification(
+    appData.employerId,
+    "completion_requested",
+    "Worker requested job completion verification",
+    `${workerName} has completed work for "${jobTitle}". Verification OTP: ${otp} (valid for 10 minutes). Please share this OTP with the worker to confirm completion.`,
+    jobId,
+    workerId,
+    workerName,
+  );
+
+  return { applicationId, otp, expirySeconds };
+}
+
+/**
+ * Worker verifies completion by submitting the 6-digit OTP given by the employer.
+ * Validates expiration, attempt count (max 5), sets job to completed, and paymentStatus to pending.
+ */
+export async function verifyJobCompletionOtpDoc(
+  jobId: string,
+  workerId: string,
+  enteredOtp: string,
+): Promise<{ success: boolean; message: string }> {
+  const applicationId = `${jobId}_${workerId}`;
+  const appRef = doc(db, "applications", applicationId);
+  const jobRef = doc(db, "jobs", jobId);
+
+  const result = await runTransaction(db, async (tx) => {
+    // READ 1: Application
+    const appSnap = await tx.get(appRef);
+
+    if (!appSnap.exists()) {
+      throw new Error("Application not found.");
+    }
+
+    const appData = appSnap.data();
+
+    if (appData.workerId !== workerId) {
+      throw new Error(
+        "Unauthorized: Only the assigned worker can verify this OTP.",
+      );
+    }
+
+    if (appData.status === "completed") {
+      throw new Error("This job is already verified and completed.");
+    }
+
+    if (appData.status !== "completion_requested") {
+      throw new Error(
+        "No active completion verification requested for this job.",
+      );
+    }
+
+    const currentAttempts = appData.completionAttempts || 0;
+
+    if (currentAttempts >= 5) {
+      throw new Error(
+        "Maximum verification attempts (5) exceeded. Please request a new completion verification.",
+      );
+    }
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    const expirySeconds =
+      typeof appData.completionOtpExpiry === "number"
+        ? appData.completionOtpExpiry
+        : appData.completionOtpExpiry?.seconds;
+
+    if (!expirySeconds || nowSeconds > expirySeconds) {
+      throw new Error(
+        "Verification OTP has expired or is invalid. Please request a new completion verification.",
+      );
+    }
+
+    const cleanEntered = enteredOtp.trim();
+
+    // Incorrect OTP: save the attempt and return without throwing
+    if (cleanEntered !== String(appData.completionOtp).trim()) {
+      const nextAttempts = currentAttempts + 1;
+
+      tx.update(appRef, {
+        completionAttempts: nextAttempts,
+        updatedAt: serverTimestamp(),
+      });
+
+      const remaining = 5 - nextAttempts;
+
+      return {
+        success: false,
+        message: `Incorrect verification code. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining.`,
+      };
+    }
+
+        // All reads are now complete. Perform writes.
+    tx.update(appRef, {
+      status: "completed",
+      paymentStatus: "pending",
+      completionOtp: null,
+      completionVerifiedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    
+    return {
+      success: true,
+      message:
+        "Job completion verified successfully! Payment is now pending.",
+    };
+  });
+
+  // Throw outside the transaction so an incorrect attempt remains saved.
+  if (!result.success) {
+    throw new Error(result.message);
+  }
+
+  // Notifications are sent only after successful verification.
+  const appSnap = await getDoc(appRef);
+  const appData = appSnap.exists() ? appSnap.data() : {};
+  const jobTitle = appData.jobTitle || "Job";
+
+  let workerName = "Worker";
+  let employerName = "Employer";
+
+  try {
+    const [wUser, eUser] = await Promise.all([
+      getDoc(doc(db, "users", workerId)),
+      getDoc(doc(db, "users", appData.employerId)),
+    ]);
+
+    if (wUser.exists()) {
+      workerName = wUser.data().name || workerName;
+    }
+
+    if (eUser.exists()) {
+      employerName = eUser.data().name || employerName;
+    }
+  } catch {
+    // Use fallback names if user details cannot be fetched.
+  }
+
+  await createNotification(
+    appData.employerId,
+    "completion_verified",
+    "Work Completed – Payment Pending",
+    `${workerName} has completed "${jobTitle}". Please release daily wage payment to complete the job.`,
+    jobId,
+    workerId,
+    workerName,
+  );
+
+  await createNotification(
+    workerId,
+    "completion_verified",
+    "Job Verified – Payment Pending",
+    `Verification successful for "${jobTitle}". ${employerName} will confirm your wage payout shortly.`,
+    jobId,
+    appData.employerId,
+    employerName,
+  );
+
+  return result;
+}
+
+/**
+ * Worker selects payment method (Cash or QR) after completion is verified.
+ * Saves paymentMethod preference on the application document and sends a notification
+ * to the employer requesting payment confirmation.
+ */
+export async function requestJobPaymentDoc(
+  jobId: string,
+  workerId: string,
+  paymentMethod: "qr_demo" | "cash",
+): Promise<void> {
+  const applicationId = jobId.includes("_") ? jobId : `${jobId}_${workerId}`;
+  const appRef = doc(db, "applications", applicationId);
+  const appSnap = await getDoc(appRef);
+
+  if (!appSnap.exists()) {
+    throw new Error("Application record not found.");
+  }
+
+  const appData = appSnap.data();
+  if (appData.workerId !== workerId) {
+    throw new Error("Unauthorized: Only the assigned worker can request payment.");
+  }
+
+  if (appData.status !== "completed") {
+    throw new Error("Job completion must be verified before requesting payment.");
+  }
+
+  await updateDoc(appRef, {
+    paymentMethod,
+    paymentStatus: "pending",
+    paymentRequestedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  // 🔔 Notify employer that worker has requested payment confirmation
+  let workerName = "Worker";
+  try {
+    const userSnap = await getDoc(doc(db, "users", workerId));
+    if (userSnap.exists()) {
+      workerName = userSnap.data().name || workerName;
+    }
+  } catch {
+    // fallback ok
+  }
+
+  const methodLabel = paymentMethod === "qr_demo" ? "UPI / QR Code" : "Cash in Hand";
+  const wage = appData.wage || 0;
+  const jobTitle = appData.jobTitle || "Job";
+
+  await createNotification(
+    appData.employerId,
+    "payment_requested",
+    "Payment Confirmation Requested",
+    `${workerName} has completed "${jobTitle}" and requested payout of ₹${wage} via ${methodLabel}. Please confirm payment in your dashboard.`,
+    jobId,
+    workerId,
+    workerName,
+  );
+}
+
+/**
+ * Employer confirms receipt/disbursement of payment (Cash or UPI Demo).
+ * Sets paymentStatus to 'paid', records timestamp & paymentMethod, unlocks mutual ratings.
+ * Follows strict Firestore transaction rules (all reads before writes) and handles multi-worker jobs.
+ */
+export async function confirmJobPaymentDoc(
+  jobId: string,
+  workerId: string,
+  employerId: string,
+  paymentMethod: "qr_demo" | "cash",
+): Promise<void> {
+  const applicationId = jobId.includes("_") ? jobId : `${jobId}_${workerId}`;
+  const actualJobId = jobId.includes("_") ? jobId.split("_")[0] : jobId;
+  const actualWorkerId = jobId.includes("_") ? jobId.split("_")[1] : workerId;
+
+  const appRef = doc(db, "applications", applicationId);
+  const jobRef = doc(db, "jobs", actualJobId);
+
+  let targetJobTitle = "Job";
+
+  await runTransaction(db, async (tx) => {
+    // 1. ALL READS FIRST (Strict Firestore transaction requirement)
+    const appSnap = await tx.get(appRef);
+    if (!appSnap.exists()) {
+      throw new Error("Application record not found.");
+    }
+
+    const appData = appSnap.data();
+    if (appData.employerId !== employerId) {
+      throw new Error("Only the employer for this job can confirm payment.");
+    }
+
+    if (appData.status !== "completed") {
+      throw new Error(
+        "Job must be verified as completed before payment can be confirmed.",
+      );
+    }
+
+    if (appData.paymentStatus === "paid") {
+      throw new Error("Payment has already been confirmed for this job.");
+    }
+
+    targetJobTitle = appData.jobTitle || targetJobTitle;
+
+    const jobSnap = await tx.get(jobRef);
+
+    // 2. ALL WRITES AFTER READS
+    tx.update(appRef, {
+      paymentStatus: "paid",
+      paymentMethod,
+      paymentConfirmedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    // Multi-worker job safety:
+    // Only update job-level paymentStatus if it's a single-opening job.
+    // If openings > 1, do NOT mark entire job listing completed or overwrite status.
+    if (jobSnap.exists()) {
+      const jobData = jobSnap.data();
+      const openings = jobData.openings ?? 1;
+      if (openings <= 1) {
+        tx.update(jobRef, {
+          paymentStatus: "paid",
+          paymentMethod,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+  });
+
+  // 🔔 Notify the worker (outside transaction)
+  let employerName = "Employer";
+  try {
+    const eUser = await getDoc(doc(db, "users", employerId));
+    if (eUser.exists()) {
+      employerName = eUser.data().name || employerName;
+    }
+  } catch {
+    // fallback
+  }
+
+  const methodLabel = paymentMethod === "qr_demo" ? "UPI (Demo)" : "Cash";
+  await createNotification(
+    actualWorkerId,
+    "payment_confirmed",
+    "Payment Confirmed!",
+    `${employerName} has confirmed payment via ${methodLabel} for "${targetJobTitle}". Mutual ratings and reviews are now unlocked.`,
+    actualJobId,
+    employerId,
+    employerName,
+  );
+}
+
+// ==========================================
+// 📜 JOB HISTORY TYPES & FETCHERS
+// ==========================================
+
+export interface WorkerJobHistoryItem {
+  id: string;
+  jobId: string;
+  employerId: string;
+  employerName: string;
+  jobTitle: string;
+  trade: string;
+  location: string;
+  wage: number;
+  duration: string;
+  description: string;
+  completionDate: string;
+  completionTimestamp?: number | null;
+  paymentStatus: "pending" | "paid";
+  paymentMethod?: "qr_demo" | "cash" | null;
+  workerReviewSubmitted: boolean;
+  employerReviewSubmitted: boolean;
+  employerReview?: {
+    rating: number;
+    comment: string;
+    categories?: any;
+    createdAt?: { seconds: number } | null;
+  } | null;
+  workerReview?: {
+    rating: number;
+    comment: string;
+    categories?: any;
+    createdAt?: { seconds: number } | null;
+  } | null;
+}
+
+export interface EmployerJobHistoryItem {
+  id: string;
+  jobId: string;
+  workerId: string;
+  workerName: string;
+  workerPhone: string;
+  jobTitle: string;
+  trade: string;
+  location: string;
+  wage: number;
+  duration: string;
+  description: string;
+  completionDate: string;
+  completionTimestamp?: number | null;
+  paymentStatus: "pending" | "paid";
+  paymentMethod?: "qr_demo" | "cash" | null;
+  workerReviewSubmitted: boolean;
+  employerReviewSubmitted: boolean;
+  workerReview?: {
+    rating: number;
+    comment: string;
+    categories?: any;
+    createdAt?: { seconds: number } | null;
+  } | null;
+  employerReview?: {
+    rating: number;
+    comment: string;
+    categories?: any;
+    createdAt?: { seconds: number } | null;
+  } | null;
+}
+
+function formatDateString(seconds?: number | null): string {
+  if (!seconds) return "Recently";
+  const d = new Date(seconds * 1000);
+  return d.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+/**
+ * Fetch all completed jobs for a worker.
+ */
+export async function fetchWorkerJobHistory(
+  workerId: string,
+): Promise<WorkerJobHistoryItem[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, "applications"),
+      where("workerId", "==", workerId),
+      where("status", "==", "completed"),
+    ),
+  );
+
+  const history: WorkerJobHistoryItem[] = [];
+
+  for (const d of snap.docs) {
+    const a = d.data();
+    let jobTitle = a.jobTitle || "Job";
+    let employerName = "Employer";
+    let location = "Location not specified";
+    let wage = 0;
+    let trade = "";
+    let duration = "";
+    let description = "";
+
+    try {
+      const jobSnap = await getDoc(doc(db, "jobs", a.jobId));
+      if (jobSnap.exists()) {
+        const j = jobSnap.data();
+        jobTitle = j.title || jobTitle;
+        employerName = j.employerName || employerName;
+        location = j.location || location;
+        wage = j.wage || 0;
+        trade = j.trade || "";
+        duration = j.duration || "";
+        description = j.description || "";
+      }
+    } catch (err) {
+      console.warn("Error fetching job details for history:", a.jobId, err);
+    }
+
+    if (employerName === "Employer" && a.employerId) {
+      try {
+        const uSnap = await getDoc(doc(db, "users", a.employerId));
+        if (uSnap.exists()) {
+          employerName = uSnap.data().name || employerName;
+        }
+      } catch {
+        // fallback ok
+      }
+    }
+
+    // Fetch mutual ratings (checks composite ID then fallback to legacy ID)
+    let employerReview: any = null;
+    let workerReview: any = null;
+
+    try {
+      const [eReviewSnap1, eReviewSnap2, wReviewSnap1, wReviewSnap2] =
+        await Promise.all([
+          getDoc(doc(db, "ratings", `${a.jobId}_${a.employerId}_${workerId}`)),
+          getDoc(doc(db, "ratings", `${a.jobId}_${a.employerId}`)),
+          getDoc(doc(db, "ratings", `${a.jobId}_${workerId}_${a.employerId}`)),
+          getDoc(doc(db, "ratings", `${a.jobId}_${workerId}`)),
+        ]);
+
+      if (eReviewSnap1.exists()) {
+        employerReview = eReviewSnap1.data();
+      } else if (eReviewSnap2.exists()) {
+        employerReview = eReviewSnap2.data();
+      }
+
+      if (wReviewSnap1.exists()) {
+        workerReview = wReviewSnap1.data();
+      } else if (wReviewSnap2.exists()) {
+        workerReview = wReviewSnap2.data();
+      }
+    } catch (err) {
+      console.warn("Error fetching ratings for history:", a.jobId, err);
+    }
+
+    const completionTimestamp =
+      a.completionVerifiedAt?.seconds ?? a.updatedAt?.seconds ?? null;
+
+    history.push({
+      id: d.id,
+      jobId: a.jobId,
+      employerId: a.employerId,
+      employerName,
+      jobTitle,
+      trade,
+      location,
+      wage,
+      duration,
+      description,
+      completionDate: formatDateString(completionTimestamp),
+      completionTimestamp,
+      paymentStatus: a.paymentStatus || "pending",
+      paymentMethod: a.paymentMethod || null,
+      workerReviewSubmitted: !!a.workerReviewSubmitted,
+      employerReviewSubmitted: !!a.employerReviewSubmitted,
+      employerReview,
+      workerReview,
+    });
+  }
+
+  return history.sort(
+    (a, b) => (b.completionTimestamp ?? 0) - (a.completionTimestamp ?? 0),
+  );
+}
+
+/**
+ * Fetch all completed posted jobs for an employer.
+ */
+export async function fetchEmployerJobHistory(
+  employerId: string,
+): Promise<EmployerJobHistoryItem[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, "applications"),
+      where("employerId", "==", employerId),
+      where("status", "==", "completed"),
+    ),
+  );
+
+  const history: EmployerJobHistoryItem[] = [];
+
+  for (const d of snap.docs) {
+    const a = d.data();
+    let jobTitle = a.jobTitle || "Job";
+    let location = "Location not specified";
+    let wage = 0;
+    let trade = "";
+    let duration = "";
+    let description = "";
+
+    try {
+      const jobSnap = await getDoc(doc(db, "jobs", a.jobId));
+      if (jobSnap.exists()) {
+        const j = jobSnap.data();
+        jobTitle = j.title || jobTitle;
+        location = j.location || location;
+        wage = j.wage || 0;
+        trade = j.trade || "";
+        duration = j.duration || "";
+        description = j.description || "";
+      }
+    } catch (err) {
+      console.warn("Error fetching job details for employer history:", a.jobId, err);
+    }
+
+    let workerName = "Worker";
+    let workerPhone = "";
+
+    try {
+      const uSnap = await getDoc(doc(db, "users", a.workerId));
+      if (uSnap.exists()) {
+        workerName = uSnap.data().name || workerName;
+        workerPhone = uSnap.data().phone || "";
+      }
+    } catch {
+      // fallback
+    }
+
+    // Fetch mutual ratings (checks composite ID then fallback to legacy ID)
+    let employerReview: any = null;
+    let workerReview: any = null;
+
+    try {
+      const [eReviewSnap1, eReviewSnap2, wReviewSnap1, wReviewSnap2] =
+        await Promise.all([
+          getDoc(doc(db, "ratings", `${a.jobId}_${employerId}_${a.workerId}`)),
+          getDoc(doc(db, "ratings", `${a.jobId}_${employerId}`)),
+          getDoc(doc(db, "ratings", `${a.jobId}_${a.workerId}_${employerId}`)),
+          getDoc(doc(db, "ratings", `${a.jobId}_${a.workerId}`)),
+        ]);
+
+      if (eReviewSnap1.exists()) {
+        employerReview = eReviewSnap1.data();
+      } else if (eReviewSnap2.exists()) {
+        employerReview = eReviewSnap2.data();
+      }
+
+      if (wReviewSnap1.exists()) {
+        workerReview = wReviewSnap1.data();
+      } else if (wReviewSnap2.exists()) {
+        workerReview = wReviewSnap2.data();
+      }
+    } catch (err) {
+      console.warn("Error fetching ratings for employer history:", a.jobId, err);
+    }
+
+    const completionTimestamp =
+      a.completionVerifiedAt?.seconds ?? a.updatedAt?.seconds ?? null;
+
+    history.push({
+      id: d.id,
+      jobId: a.jobId,
+      workerId: a.workerId,
+      workerName,
+      workerPhone,
+      jobTitle,
+      trade,
+      location,
+      wage,
+      duration,
+      description,
+      completionDate: formatDateString(completionTimestamp),
+      completionTimestamp,
+      paymentStatus: a.paymentStatus || "pending",
+      paymentMethod: a.paymentMethod || null,
+      workerReviewSubmitted: !!a.workerReviewSubmitted,
+      employerReviewSubmitted: !!a.employerReviewSubmitted,
+      workerReview,
+      employerReview,
+    });
+  }
+
+  return history.sort(
+    (a, b) => (b.completionTimestamp ?? 0) - (a.completionTimestamp ?? 0),
+  );
 }
