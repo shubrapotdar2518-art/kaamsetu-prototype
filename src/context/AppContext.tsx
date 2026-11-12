@@ -30,6 +30,7 @@ import {
   fetchEmployerApplications,
   updateApplicationStatusDoc,
   sendJobOfferDoc,
+  sendDirectJobOfferDoc,
   acceptJobOfferDoc,
   rejectJobOfferDoc,
   type FirestoreJob,
@@ -47,9 +48,10 @@ export interface JobItem {
   location: string;
   distance: string;
   matchPercentage?: number;
-  badge?: "Match" | "New" | "Urgent";
+  badge?: "Match" | "New" | "Urgent" | "Recommended";
   postedTime: string;
   employerName: string;
+  employerId?: string;
   applied?: boolean;
   description: string;
   workersNeeded: number;
@@ -57,6 +59,9 @@ export interface JobItem {
 
 export interface JobApplication {
   id: string;
+  workerId?: string;
+  employerId?: string;
+  jobId?: string;
   workerName: string;
   trade: string;
   experience: string;
@@ -158,6 +163,7 @@ interface AppContextType {
   }) => Promise<void>;
     refreshJobs: () => Promise<void>;
   sendJobOffer: (id: string) => Promise<void>;
+  sendDirectJobOffer: (jobId: string, workerId: string) => Promise<boolean>;
   acceptJobOffer: (applicationId: string) => Promise<boolean>;
   rejectJobOffer: (applicationId: string) => Promise<boolean>;
 }
@@ -493,6 +499,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
                   : "New",
             postedTime: timeAgo(j.postedAt?.seconds),
             employerName: j.employerName,
+            employerId: j.employerId,
             applied: appliedIds.includes(j.id),
             description: j.description,
             workersNeeded: j.openings,
@@ -534,6 +541,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         if (apps.length > 0) {
   const realApplications: JobApplication[] = apps.map((a) => ({
     id: a.id,
+    workerId: a.workerId,
+    employerId: a.employerId,
+    jobId: a.jobId,
     workerName: a.workerName,
     trade: a.workerTrade,
     experience: `${a.workerExperience} Years Experience`,
@@ -820,6 +830,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  // Employer: send a direct job offer to any available worker (even if they have not applied)
+  const sendDirectJobOffer = async (
+    jobId: string,
+    workerId: string,
+  ): Promise<boolean> => {
+    if (!userProfile.uid) {
+      showToast("Please login first.", "error");
+      return false;
+    }
+
+    try {
+      await sendDirectJobOfferDoc(jobId, workerId, userProfile.uid);
+      await refreshJobs();
+      showToast("Job offer sent! The worker has been notified.");
+      return true;
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Could not send the offer.",
+        "error",
+      );
+      return false;
+    }
+  };
+
   // Worker: accept a job offer
   const acceptJobOffer = async (applicationId: string): Promise<boolean> => {
     if (!userProfile.uid) {
@@ -964,6 +998,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         saveWorkerProfile,
         refreshJobs,
         sendJobOffer,
+        sendDirectJobOffer,
         acceptJobOffer,
         rejectJobOffer,
       }}

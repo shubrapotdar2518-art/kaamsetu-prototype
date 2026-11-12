@@ -13,11 +13,13 @@ import {
   MapPin,
   Building2,
   User,
+  MessageSquare,
 } from 'lucide-react';
 import { DashboardLayout } from '../../layouts/DashboardLayout';
 import { ProfileOverviewCard } from '../../components/ProfileOverviewCard';
 import { useApp } from '../../context/AppContext';
 import { useLanguage } from '../../i18n/LanguageContext';
+import { ensureConversation } from '../../services/messageService';
 
 export const EmployerDashboardPage: React.FC = () => {
   const { userProfile, employerJobPosts, applications, updateApplicationStatus, sendJobOffer, showToast } = useApp();
@@ -31,6 +33,30 @@ export const EmployerDashboardPage: React.FC = () => {
    const handleHire = (appId: string, name: string) => {
     sendJobOffer(appId);
   };
+
+  const handleMessageWorker = async (app: (typeof applications)[0]) => {
+    if (!userProfile.uid) {
+      showToast('Please login first', 'error');
+      return;
+    }
+
+    const workerId = app.workerId || app.id;
+    try {
+      const convId = await ensureConversation({
+        employerId: userProfile.uid,
+        workerId: workerId,
+        employerName: userProfile.name || userProfile.companyName || 'Employer',
+        workerName: app.workerName,
+        jobId: app.jobId,
+        jobTitle: app.appliedFor,
+      });
+      navigate('/employer-messages', { state: { conversationId: convId, workerId } });
+    } catch (err) {
+      console.error('Failed to open conversation:', err);
+      navigate('/employer-messages');
+    }
+  };
+
 
   return (
     <DashboardLayout type="employer">
@@ -55,52 +81,73 @@ export const EmployerDashboardPage: React.FC = () => {
         </section>
 
         {/* 2. Quick Actions Banner Row */}
-        <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {/* Post a Job Banner */}
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Find Workers Banner */}
           <div
-            onClick={() => navigate('/post-job')}
-            className="group relative overflow-hidden bg-gradient-to-br from-white to-[#ECFDF5] rounded-3xl p-5 sm:p-6 border border-emerald-200/80 shadow-xs hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
+            onClick={() => navigate('/find-workers')}
+            className="group relative overflow-hidden bg-gradient-to-br from-white to-[#F0FDF4] rounded-3xl p-5 border border-emerald-200/90 shadow-xs hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
           >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-[#15803D] text-white flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
-                <PlusCircle className="w-6 h-6" />
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-[#15803D] text-white flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
+                <Users className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base sm:text-lg font-extrabold text-gray-900 group-hover:text-[#15803D] transition-colors">
-                  {t('postAJob', 'Post a Job')}
+                <h3 className="text-sm sm:text-base font-extrabold text-gray-900 group-hover:text-[#15803D] transition-colors">
+                  {t('findWorkers', 'Find Workers')}
                 </h3>
-                <p className="text-xs text-gray-500 font-medium mt-0.5">
-                  {t('postAJobSubtitle', 'Find the right skilled workers in minutes')}
+                <p className="text-[11px] text-gray-500 font-medium mt-0.5">
+                  Browse available workers & send offers
                 </p>
               </div>
             </div>
-            <ArrowRight className="w-5 h-5 text-gray-400 group-hover:text-[#15803D] group-hover:translate-x-1 transition-all" />
+            <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-[#15803D] group-hover:translate-x-1 transition-all" />
+          </div>
+
+          {/* Post a Job Banner */}
+          <div
+            onClick={() => navigate('/post-job')}
+            className="group relative overflow-hidden bg-gradient-to-br from-white to-[#F8FAFC] rounded-3xl p-5 border border-slate-200/90 shadow-xs hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-slate-800 text-white flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
+                <PlusCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm sm:text-base font-extrabold text-gray-900 group-hover:text-slate-800 transition-colors">
+                  {t('postAJob', 'Post a Job')}
+                </h3>
+                <p className="text-[11px] text-gray-500 font-medium mt-0.5">
+                  {t('postAJobSubtitle', 'Find skilled workers in minutes')}
+                </p>
+              </div>
+            </div>
+            <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-slate-800 group-hover:translate-x-1 transition-all" />
           </div>
 
           {/* Emergency Hiring Banner */}
           <div
             onClick={() => navigate('/emergency-hiring')}
-            className="group relative overflow-hidden bg-gradient-to-br from-white to-[#FFF7ED] rounded-3xl p-5 sm:p-6 border border-orange-200/80 shadow-xs hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
+            className="group relative overflow-hidden bg-gradient-to-br from-white to-[#FFF7ED] rounded-3xl p-5 border border-orange-200/80 shadow-xs hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
           >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-[#F97316] text-white flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
-                <Zap className="w-6 h-6" />
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-[#F97316] text-white flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
+                <Zap className="w-5 h-5" />
               </div>
               <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base sm:text-lg font-extrabold text-gray-900 group-hover:text-[#F97316] transition-colors">
+                <div className="flex items-center gap-1.5">
+                  <h3 className="text-sm sm:text-base font-extrabold text-gray-900 group-hover:text-[#F97316] transition-colors">
                     {t('emergencyHiring', 'Emergency Hiring')}
                   </h3>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-orange-100 text-orange-800 animate-pulse">
-                    ⚡ 2 Hours
+                  <span className="px-1.5 py-0.5 rounded-full text-[9px] font-extrabold bg-orange-100 text-orange-800 animate-pulse">
+                    ⚡ Fast
                   </span>
                 </div>
-                <p className="text-xs text-gray-500 font-medium mt-0.5">
-                  {t('emergencyHiringSubtitle', 'Need workers urgently? Instant broadcast')}
+                <p className="text-[11px] text-gray-500 font-medium mt-0.5">
+                  {t('emergencyHiringSubtitle', 'Instant broadcast within 2 hours')}
                 </p>
               </div>
             </div>
-            <ArrowRight className="w-5 h-5 text-gray-400 group-hover:text-[#F97316] group-hover:translate-x-1 transition-all" />
+            <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-[#F97316] group-hover:translate-x-1 transition-all" />
           </div>
         </section>
 
@@ -254,6 +301,15 @@ export const EmployerDashboardPage: React.FC = () => {
                     <Phone className="w-3.5 h-3.5 text-[#15803D]" />
                     <span>{t('callWorker', 'Call')}</span>
                   </a>
+
+                  <button
+                    type="button"
+                    onClick={() => handleMessageWorker(app)}
+                    className="px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-xs font-bold text-[#15803D] flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    <span>{t('messages', 'Message')}</span>
+                  </button>
 
                                     {app.status !== 'Shortlisted' &&
                     app.status !== 'Hired' &&

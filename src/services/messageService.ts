@@ -1,7 +1,7 @@
 // src/services/messageService.ts
 // Handles chat conversations between an employer and a worker.
 //
-// Firestore structure (new — add to firestore-schema.md):
+// Firestore structure:
 //
 // conversations/{conversationId}
 //   employerId, workerId, employerName, workerName,
@@ -23,10 +23,14 @@ import {
   orderBy,
   onSnapshot,
   serverTimestamp,
+  increment,
   type Unsubscribe,
 } from "firebase/firestore";
-import { db } from "../firebase/firebaseClient";
-import { createNotification } from "./notificationService";
+import { db, auth } from "../firebase/firebaseClient";
+import {
+  createNotification,
+  archiveNotificationsByRelatedId,
+} from "./notificationService";
 
 export interface Conversation {
   id: string;
@@ -65,8 +69,8 @@ export async function ensureConversation(params: {
   workerId: string;
   employerName: string;
   workerName: string;
-  jobId?: string;
-  jobTitle?: string;
+  jobId?: string | null;
+  jobTitle?: string | null;
 }): Promise<string> {
   const id = getConversationId(params.employerId, params.workerId);
   const ref = doc(db, "conversations", id);
@@ -76,8 +80,8 @@ export async function ensureConversation(params: {
     await setDoc(ref, {
       employerId: params.employerId,
       workerId: params.workerId,
-      employerName: params.employerName,
-      workerName: params.workerName,
+      employerName: params.employerName || "Employer",
+      workerName: params.workerName || "Worker",
       jobId: params.jobId ?? null,
       jobTitle: params.jobTitle ?? null,
       lastMessage: "",
@@ -115,25 +119,50 @@ export async function sendMessage(
     { merge: true },
   );
 
-  // 🔔 Notify the other person about the new message
-  await createNotification(
-    receiverId,
-    "new_message",
-    "New message",
-    text.trim().slice(0, 80),
-    conversationId,
-  );
+    // 🔔 Notify the other person about the new message
+  try {
+    if (receiverId) {
+      const conversationSnap = await getDoc(
+        doc(db, "conversations", conversationId),
+      );
+
+      const conversationData = conversationSnap.data();
+      const unreadField =
+  receiverId === conversationData?.workerId
+    ? "unreadForWorker"
+    : "unreadForEmployer";
+
+await setDoc(
+  doc(db, "conversations", conversationId),
+  {
+    [unreadField]: increment(1),
+  },
+  { merge: true },
+);
+
+      const senderName =
+        conversationData?.employerId === senderId
+          ? conversationData?.employerName ?? "Employer"
+          : conversationData?.workerName ?? "Worker";
+
+      await createNotification(
+        receiverId,
+        "new_message",
+        "New message",
+        text.trim().slice(0, 80),
+        conversationId,
+        senderId,
+        senderName,
+      );
+    }
+  } catch (notifErr) {
+    console.warn("Failed to create message notification:", notifErr);
+  }
 }
 
 /**
  * Live-subscribes to all messages in a conversation, oldest first.
  * Call the returned function to stop listening (e.g. when leaving the page).
- *
- * Usage in a component:
- *   useEffect(() => {
- *     const unsub = subscribeToMessages(conversationId, setMessages);
- *     return unsub;
- *   }, [conversationId]);
  */
 export function subscribeToMessages(
   conversationId: string,
@@ -143,14 +172,20 @@ export function subscribeToMessages(
     collection(db, "conversations", conversationId, "messages"),
     orderBy("sentAt", "asc"),
   );
-  return onSnapshot(q, (snap) => {
-    callback(
-      snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<ChatMessageDoc, "id">),
-      })),
-    );
-  });
+  return onSnapshot(
+    q,
+    (snap) => {
+      callback(
+        snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<ChatMessageDoc, "id">),
+        })),
+      );
+    },
+    (err) => {
+      console.error("Error subscribing to messages:", err);
+    },
+  );
 }
 
 /**
@@ -170,4 +205,70 @@ export async function getMyConversations(
       (a, b) =>
         (b.lastMessageAt?.seconds ?? 0) - (a.lastMessageAt?.seconds ?? 0),
     );
+}
+
+/**
+ * Resets the unread message count and archives any pending message notifications
+ * when a user opens a conversation.
+ */
+export async function markConversationRead(
+  conversationId: string,
+  role: "employer" | "worker",
+  userId?: string,
+): Promise<void> {
+  const unreadField =
+    role === "worker" ? "unreadForWorker" : "unreadForEmployer";
+
+  await setDoc(
+    doc(db, "conversations", conversationId),
+    {
+      [unreadField]: 0,
+    },
+    { merge: true },
+  );
+
+  const targetUid = userId || auth.currentUser?.uid;
+  if (targetUid) {
+    try {
+      await archiveNotificationsByRelatedId(
+        targetUid,
+        conversationId,
+        "new_message",
+      );
+    } catch (err) {
+      console.warn("Failed to archive message notifications:", err);
+    }
+  }
+}
+
+/**
+ * Live count of conversations with unread messages for a user.
+ */
+export function subscribeToUnreadConversations(
+  userId: string,
+  role: "worker" | "employer",
+  callback: (count: number) => void,
+): Unsubscribe {
+  const userField = role === "worker" ? "workerId" : "employerId";
+  const unreadField =
+    role === "worker" ? "unreadForWorker" : "unreadForEmployer";
+
+  const q = query(
+    collection(db, "conversations"),
+    where(userField, "==", userId),
+  );
+
+  return onSnapshot(
+    q,
+    (snap) => {
+      const count = snap.docs.filter(
+        (d) => (d.data()[unreadField] ?? 0) > 0,
+      ).length;
+
+      callback(count);
+    },
+    (err) => {
+      console.error("Failed to subscribe to unread conversations:", err);
+    },
+  );
 }

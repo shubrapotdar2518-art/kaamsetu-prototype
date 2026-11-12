@@ -16,14 +16,15 @@ import { WorkerDetailsPage } from "./pages/onboarding/WorkerDetailsPage";
 import { LoginPage } from "./pages/onboarding/LoginPage";
 
 import { WorkerDashboardPage } from "./pages/worker/WorkerDashboardPage";
-import { RecommendedJobsPage } from "./pages/worker/RecommendedJobsPage";
 import { AvailableJobsPage } from "./pages/worker/AvailableJobsPage";
+import { AppliedJobsPage } from "./pages/worker/AppliedJobsPage";
 import { ChatAssistantPage } from "./pages/worker/ChatAssistantPage";
 import { WelfareSchemesPage } from "./pages/worker/WelfareSchemesPage";
 import { MessagesPage } from "./pages/worker/MessagesPage";
 import { WorkerProfilePage } from "./pages/worker/WorkerProfilePage";
 
 import { EmployerDashboardPage } from "./pages/employer/EmployerDashboardPage";
+import { FindWorkersPage } from "./pages/employer/FindWorkersPage";
 import { PostJobPage } from "./pages/employer/PostJobPage";
 import { EmergencyHiringPage } from "./pages/employer/EmergencyHiringPage";
 import { EmployerMessagesPage } from "./pages/employer/EmployerMessagesPage";
@@ -64,9 +65,10 @@ export function App() {
             />
             <Route
               path="/recommended-jobs"
-              element={W(<RecommendedJobsPage />)}
+              element={<Navigate to="/available-jobs" replace />}
             />
             <Route path="/available-jobs" element={W(<AvailableJobsPage />)} />
+            <Route path="/applied-jobs" element={W(<AppliedJobsPage />)} />
             <Route path="/chat" element={W(<ChatAssistantPage />)} />
             <Route
               path="/welfare-schemes"
@@ -84,6 +86,7 @@ export function App() {
               path="/employer-dashboard"
               element={E(<EmployerDashboardPage />)}
             />
+            <Route path="/find-workers" element={E(<FindWorkersPage />)} />
             <Route path="/post-job" element={E(<PostJobPage />)} />
             <Route
               path="/emergency-hiring"

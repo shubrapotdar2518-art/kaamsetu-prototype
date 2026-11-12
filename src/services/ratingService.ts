@@ -77,13 +77,20 @@ export async function submitRating(
     updatedAt: serverTimestamp(),
   });
 
-  // 🔔 Let the reviewee know they got rated
+   // 🔔 Let the reviewee know they got rated
+  const reviewerSnap = await getDoc(doc(db, "users", reviewerId));
+  const reviewerName = reviewerSnap.exists()
+    ? reviewerSnap.data().name ?? "A user"
+    : "A user";
+
   await createNotification(
     revieweeId,
     "job_completed",
     "You received a rating",
-    `You were rated ${rating}/5 for "${jobTitle}".`,
+    `${reviewerName} rated you ${rating}/5 for "${jobTitle}".`,
     jobId,
+    reviewerId,
+    reviewerName,
   );
 }
 

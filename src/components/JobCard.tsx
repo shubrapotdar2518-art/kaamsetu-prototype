@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { MapPin, Clock, ShieldCheck, Sparkles, Check, Briefcase } from 'lucide-react';
+import { MapPin, Clock, ShieldCheck, Sparkles, Check, Briefcase, MessageSquare } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { JobItem, useApp } from '../context/AppContext';
+import { ensureConversation } from '../services/messageService';
 import { useLanguage } from '../i18n/LanguageContext';
 import confetti from 'canvas-confetti';
 
@@ -10,12 +12,36 @@ interface JobCardProps {
 }
 
 export const JobCard: React.FC<JobCardProps> = ({ job, compact = false }) => {
-  const { applyToJob } = useApp();
+  const { applyToJob, userProfile, showToast } = useApp();
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const [showModal, setShowModal] = useState(false);
 
   const translatedTitle = t(job.titleKey, job.defaultTitle);
   const isApplied = !!job.applied;
+
+  const handleMessageEmployer = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!userProfile.uid) {
+      showToast('Please login first', 'error');
+      return;
+    }
+    const empId = job.employerId || ('employer-' + job.id);
+    try {
+      const convId = await ensureConversation({
+        employerId: empId,
+        workerId: userProfile.uid,
+        employerName: job.employerName || 'Employer',
+        workerName: userProfile.name || 'Worker',
+        jobId: job.id,
+        jobTitle: job.defaultTitle,
+      });
+      navigate('/messages', { state: { conversationId: convId, employerId: empId } });
+    } catch (err) {
+      console.error('Failed to open conversation:', err);
+      navigate('/messages');
+    }
+  };
 
   const handleApply = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -43,13 +69,20 @@ export const JobCard: React.FC<JobCardProps> = ({ job, compact = false }) => {
         {/* Top Badges */}
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex flex-wrap items-center gap-1.5">
-            {job.matchPercentage && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-[#ECFDF5] text-[#15803D] border border-[#A7F3D0]">
+            {((job.matchPercentage && job.matchPercentage >= 75) || job.badge === 'Recommended' || job.badge === 'Match') ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-[#ECFDF5] text-[#15803D] border border-[#A7F3D0] shadow-2xs">
                 <Sparkles className="w-3 h-3 text-[#15803D]" />
+                <span>{t('recommended', 'Recommended')}</span>
+                {job.matchPercentage ? (
+                  <span className="text-[11px] font-semibold text-emerald-700">({job.matchPercentage}%)</span>
+                ) : null}
+              </span>
+            ) : job.matchPercentage ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-gray-50 text-gray-600 border border-gray-200">
                 {job.matchPercentage}% {t('matchBadge', 'Match')}
               </span>
-            )}
-            {job.badge === 'New' && (
+            ) : null}
+            {(!job.matchPercentage || job.matchPercentage < 75) && job.badge === 'New' && (
               <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
                 {t('newBadge', 'New')}
               </span>
@@ -108,25 +141,31 @@ export const JobCard: React.FC<JobCardProps> = ({ job, compact = false }) => {
 
         {/* Action Button */}
         <div className="mt-3">
-          <button
-            type="button"
-            onClick={handleApply}
-            disabled={isApplied}
-            className={`w-full py-2 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${
-              isApplied
-                ? 'bg-gray-100 text-gray-500 cursor-not-allowed border border-gray-200'
-                : 'bg-[#15803D] hover:bg-[#166534] active:scale-[0.98] text-white shadow-xs hover:shadow'
-            }`}
-          >
-            {isApplied ? (
-              <>
+          {isApplied ? (
+            <div className="flex gap-2">
+              <div className="flex-1 py-2 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 bg-gray-100 text-gray-500 border border-gray-200 cursor-not-allowed">
                 <Check className="w-4 h-4 text-emerald-600" />
                 {t('applied', 'Applied')}
-              </>
-            ) : (
-              t('apply', 'Apply Now')
-            )}
-          </button>
+              </div>
+              <button
+                type="button"
+                onClick={handleMessageEmployer}
+                className="py-2 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-[#15803D] border border-emerald-200 transition-colors cursor-pointer"
+                title="Message Employer"
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>{t('messages', 'Chat')}</span>
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleApply}
+              className="w-full py-2 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-all bg-[#15803D] hover:bg-[#166534] active:scale-[0.98] text-white shadow-xs hover:shadow cursor-pointer"
+            >
+              {t('apply', 'Apply Now')}
+            </button>
+          )}
         </div>
       </div>
 
@@ -193,28 +232,30 @@ export const JobCard: React.FC<JobCardProps> = ({ job, compact = false }) => {
               >
                 {t('cancel', 'Close')}
               </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  handleApply(e);
-                  setShowModal(false);
-                }}
-                disabled={isApplied}
-                className={`flex-1 py-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 ${
-                  isApplied
-                    ? 'bg-gray-100 text-gray-500 border border-gray-200 cursor-not-allowed'
-                    : 'bg-[#15803D] hover:bg-[#166534] text-white shadow-md'
-                }`}
-              >
-                {isApplied ? (
-                  <>
-                    <Check className="w-4 h-4 text-emerald-600" />
-                    {t('applied', 'Applied')}
-                  </>
-                ) : (
-                  t('apply', 'Apply Now')
-                )}
-              </button>
+              {isApplied ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    setShowModal(false);
+                    handleMessageEmployer(e);
+                  }}
+                  className="flex-1 py-3 rounded-xl font-bold text-xs bg-[#15803D] hover:bg-[#166534] text-white shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span>{t('messages', 'Message Employer')}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    handleApply(e);
+                    setShowModal(false);
+                  }}
+                  className="flex-1 py-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 bg-[#15803D] hover:bg-[#166534] text-white shadow-md cursor-pointer"
+                >
+                  {t('apply', 'Apply Now')}
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -28,6 +28,8 @@ export interface FirestoreJob {
   urgency: "normal" | "emergency";
   status: string;
   postedAt?: { seconds: number } | null;
+  hiredCount?: number;
+  applicantsCount?: number;
 }
 
 export async function postJobDoc(
@@ -55,6 +57,7 @@ export async function fetchOpenJobs(): Promise<FirestoreJob[]> {
   );
   return snap.docs
     .map(toJob)
+    .filter((j) => (j.hiredCount ?? 0) < (j.openings ?? 1))
     .sort((a, b) => (b.postedAt?.seconds ?? 0) - (a.postedAt?.seconds ?? 0));
 }
 
@@ -91,13 +94,20 @@ export async function applyToJobDoc(
     updatedAt: serverTimestamp(),
   });
 
-  // 🔔 Notify the employer that someone applied
+    // 🔔 Notify the employer that someone applied
+  const workerSnap = await getDoc(doc(db, "users", workerId));
+  const workerName = workerSnap.exists()
+    ? workerSnap.data().name ?? "A worker"
+    : "A worker";
+
   await createNotification(
     employerId,
     "application_received",
     "New application received",
-    `A worker applied for "${jobTitle}".`,
+    `${workerName} applied for "${jobTitle}".`,
     jobId,
+    workerId,
+    workerName,
   );
 }
 
@@ -108,6 +118,84 @@ export async function fetchMyAppliedJobIds(
     query(collection(db, "applications"), where("workerId", "==", workerId)),
   );
   return snap.docs.map((d) => d.data().jobId as string);
+}
+
+export interface WorkerAppliedJobItem {
+  id: string;
+  jobId: string;
+  employerId: string;
+  jobTitle: string;
+  employerName: string;
+  location: string;
+  wage: number;
+  status: string;
+  appliedAt?: { seconds: number } | null;
+  trade?: string;
+  description?: string;
+}
+
+export async function fetchWorkerApplications(
+  workerId: string,
+): Promise<WorkerAppliedJobItem[]> {
+  const snap = await getDocs(
+    query(collection(db, "applications"), where("workerId", "==", workerId)),
+  );
+
+  const results: WorkerAppliedJobItem[] = [];
+
+  for (const d of snap.docs) {
+    const a = d.data();
+    let employerName = "Employer";
+    let location = "Location not specified";
+    let wage = 0;
+    let trade = "";
+    let description = "";
+    let jobTitle = a.jobTitle || "Job";
+
+    try {
+      const jobSnap = await getDoc(doc(db, "jobs", a.jobId));
+      if (jobSnap.exists()) {
+        const j = jobSnap.data();
+        jobTitle = j.title || jobTitle;
+        employerName = j.employerName || employerName;
+        location = j.location || location;
+        wage = j.wage || 0;
+        trade = j.trade || "";
+        description = j.description || "";
+      }
+    } catch (err) {
+      console.warn("Could not fetch job details for application:", a.jobId, err);
+    }
+
+    if (employerName === "Employer" && a.employerId) {
+      try {
+        const userSnap = await getDoc(doc(db, "users", a.employerId));
+        if (userSnap.exists()) {
+          employerName = userSnap.data().name || employerName;
+        }
+      } catch {
+        // fallback ok
+      }
+    }
+
+    results.push({
+      id: d.id,
+      jobId: a.jobId,
+      employerId: a.employerId,
+      jobTitle,
+      employerName,
+      location,
+      wage,
+      status: a.status || "pending",
+      appliedAt: a.appliedAt ?? null,
+      trade,
+      description,
+    });
+  }
+
+  return results.sort(
+    (a, b) => (b.appliedAt?.seconds ?? 0) - (a.appliedAt?.seconds ?? 0),
+  );
 }
 
 export interface FirestoreApplication {
@@ -184,6 +272,11 @@ export async function updateApplicationStatusDoc(
     };
     const label = friendlyStatus[status];
     if (label) {
+            const employerSnap = await getDoc(doc(db, "users", a.employerId));
+      const employerName = employerSnap.exists()
+        ? employerSnap.data().name ?? "Employer"
+        : "Employer";
+
       await createNotification(
         a.workerId,
         status === "accepted"
@@ -192,8 +285,10 @@ export async function updateApplicationStatusDoc(
             ? "application_rejected"
             : "job_completed",
         "Application update",
-        `Your application for "${a.jobTitle}" was ${label}.`,
+        `${employerName}: Your application for "${a.jobTitle}" was ${label}.`,
         a.jobId,
+        a.employerId,
+        employerName,
       );
         }
   }
@@ -231,13 +326,112 @@ export async function sendJobOfferDoc(
   });
 
   // 🔔 Notify the worker about the offer (Accept / Reject shown in the Navbar)
+  const employerName = j.employerName ?? "An employer";
+
   await createNotification(
     a.workerId,
     "job_offer",
     "You have a job offer!",
-    `${j.employerName ?? "An employer"} offered you the job "${a.jobTitle}".`,
+    `${employerName} offered you the job "${a.jobTitle}".`,
     a.jobId,
+    employerId,
+    employerName,
   );
+}
+
+/**
+ * Employer sends a direct job offer to a worker for one of their open jobs,
+ * even if the worker has NOT previously applied.
+ * Creates/updates the application document (id: {jobId}_{workerId}) with status "offered",
+ * prevents duplicate active offers, and notifies the worker.
+ */
+export async function sendDirectJobOfferDoc(
+  jobId: string,
+  workerId: string,
+  employerId: string,
+): Promise<{ applicationId: string; jobTitle: string }> {
+  // 1. Verify job exists and belongs to this employer
+  const jobRef = doc(db, "jobs", jobId);
+  const jobSnap = await getDoc(jobRef);
+  if (!jobSnap.exists()) throw new Error("Job not found.");
+
+  const j = jobSnap.data();
+  if (j.employerId !== employerId) {
+    throw new Error("You can only send offers for your own jobs.");
+  }
+  if (j.status !== "open" || (j.hiredCount ?? 0) >= (j.openings ?? 1)) {
+    throw new Error("All positions for this job are already filled.");
+  }
+
+  // 2. Application document ID is {jobId}_{workerId}
+  const applicationId = `${jobId}_${workerId}`;
+  const appRef = doc(db, "applications", applicationId);
+  const appSnap = await getDoc(appRef);
+
+  if (appSnap.exists()) {
+    const a = appSnap.data();
+    if (["offered", "in_progress", "completed", "accepted"].includes(a.status)) {
+      throw new Error("An active offer or job already exists for this worker.");
+    }
+    // If previously rejected or declined, reset to offered
+    await updateDoc(appRef, {
+      status: "offered",
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    // Create new application record with status 'offered'
+    await setDoc(appRef, {
+      jobId,
+      workerId,
+      employerId,
+      jobTitle: j.title || "Job Offer",
+      message: "Direct job offer from employer",
+      status: "offered",
+      appliedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  // 3. 🔔 Notify the worker (existing job_offer notification type)
+  const employerName = j.employerName ?? "An employer";
+
+  await createNotification(
+    workerId,
+    "job_offer",
+    "You have a job offer!",
+    `${employerName} offered you the job "${j.title || "Job Offer"}".`,
+    jobId,
+    employerId,
+    employerName,
+  );
+
+  return { applicationId, jobTitle: j.title || "Job Offer" };
+}
+
+/**
+ * Returns a map of `${jobId}_${workerId}` -> application status for an employer.
+ * Used to easily check if an offer has already been sent to a worker for a job.
+ */
+export async function fetchEmployerJobOffers(
+  employerId: string,
+): Promise<Record<string, string>> {
+  try {
+    const snap = await getDocs(
+      query(
+        collection(db, "applications"),
+        where("employerId", "==", employerId),
+      ),
+    );
+    const map: Record<string, string> = {};
+    for (const d of snap.docs) {
+      const data = d.data();
+      map[`${data.jobId}_${data.workerId}`] = data.status;
+    }
+    return map;
+  } catch (err) {
+    console.error("fetchEmployerJobOffers error:", err);
+    return {};
+  }
 }
 
 // Worker accepts a job offer.
@@ -300,12 +494,14 @@ export async function acceptJobOfferDoc(
     // If the name can't be read, the generic text is fine
   }
 
-  await createNotification(
+    await createNotification(
     info.employerId,
     "offer_accepted",
     "Job offer accepted",
     `${workerName} accepted your offer for "${info.jobTitle}".`,
     info.jobId,
+    workerId,
+    workerName,
   );
 }
 
@@ -341,12 +537,14 @@ export async function rejectJobOfferDoc(
     // If the name can't be read, the generic text is fine
   }
 
-  await createNotification(
+    await createNotification(
     a.employerId,
     "offer_rejected",
     "Job offer declined",
     `${workerName} declined your offer for "${a.jobTitle}".`,
     a.jobId,
+    workerId,
+    workerName,
   );
 }
 

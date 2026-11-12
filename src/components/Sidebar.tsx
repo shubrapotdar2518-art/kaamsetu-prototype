@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -13,10 +13,13 @@ import {
   PlusCircle,
   Zap,
   Repeat,
+  CheckCircle2,
+  Users,
 } from 'lucide-react';
 import { KaamSetuLogo } from './KaamSetuLogo';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useApp } from '../context/AppContext';
+import { subscribeToUnreadConversations } from '../services/messageService';
 
 interface NavItem {
   to: string;
@@ -33,9 +36,26 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ type }) => {
   const { t } = useLanguage();
-  const { setUserRole } = useApp();
-  const navigate = useNavigate();
-  const location = useLocation();
+  const { setUserRole, userProfile } = useApp();
+const navigate = useNavigate();
+const location = useLocation();
+
+const [unreadConversationCount, setUnreadConversationCount] = useState(0);
+
+useEffect(() => {
+  if (!userProfile.uid) {
+    setUnreadConversationCount(0);
+    return;
+  }
+
+  const unsubscribe = subscribeToUnreadConversations(
+    userProfile.uid,
+    type,
+    setUnreadConversationCount,
+  );
+
+  return () => unsubscribe();
+}, [userProfile.uid, type]);
 
   const handleLogout = () => {
     navigate('/welcome');
@@ -52,21 +72,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ type }) => {
   };
 
   const workerNavItems: NavItem[] = [
-    { to: '/worker-dashboard', label: t('overview', 'Overview'), icon: LayoutDashboard, exact: true },
-    { to: '/recommended-jobs', label: t('recommendedJobs', 'Recommended Jobs'), icon: Sparkles, badge: '3' },
+    { to: '/worker-dashboard', label: t('dashboard', 'Dashboard'), icon: LayoutDashboard, exact: true },
     { to: '/available-jobs', label: t('availableJobs', 'Available Jobs'), icon: Briefcase },
-    { to: '/chat', label: t('chatAssistant', 'Chat Assistant'), icon: Bot },
+    { to: '/applied-jobs', label: t('appliedJobs', 'Applied Jobs'), icon: CheckCircle2 },
+    { to: '/messages', label: t('messages', 'Messages'), icon: MessageSquare },
     { to: '/welfare-schemes', label: t('welfareSchemes', 'Welfare Schemes'), icon: Landmark },
-    { to: '/messages', label: t('messages', 'Messages'), icon: MessageSquare, badge: '2' },
     { to: '/worker-profile', label: t('workerProfile', 'Profile'), icon: User },
     { to: '/settings', label: t('settings', 'Settings'), icon: Settings },
   ];
 
   const employerNavItems: NavItem[] = [
     { to: '/employer-dashboard', label: t('overview', 'Overview'), icon: LayoutDashboard, exact: true },
+    { to: '/find-workers', label: t('findWorkers', 'Find Workers'), icon: Users },
     { to: '/post-job', label: t('postAJob', 'Post a Job'), icon: PlusCircle },
     { to: '/emergency-hiring', label: t('emergencyHiring', 'Emergency Hiring'), icon: Zap, highlight: true },
-    { to: '/employer-messages', label: t('messages', 'Messages'), icon: MessageSquare, badge: '4' },
+    { to: '/employer-messages', label: t('messages', 'Messages'), icon: MessageSquare },
     { to: '/employer-profile', label: t('employerProfile', 'Profile'), icon: User },
     { to: '/employer-settings', label: t('settings', 'Settings'), icon: Settings },
   ];
@@ -106,6 +126,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ type }) => {
             const isActive = item.exact
               ? location.pathname === item.to
               : location.pathname.startsWith(item.to);
+              const badgeText =
+  item.to === '/messages' || item.to === '/employer-messages'
+    ? unreadConversationCount > 0
+      ? String(unreadConversationCount)
+      : null
+    : item.badge;
 
             return (
               <NavLink
@@ -124,7 +150,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ type }) => {
                   <span className="truncate">{item.label}</span>
                 </div>
 
-                {item.badge && (
+                {badgeText && (
                   <span
                     className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                       isActive
@@ -132,7 +158,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ type }) => {
                         : 'bg-emerald-100 text-[#15803D]'
                     }`}
                   >
-                    {item.badge}
+                    {badgeText}
                   </span>
                 )}
               </NavLink>

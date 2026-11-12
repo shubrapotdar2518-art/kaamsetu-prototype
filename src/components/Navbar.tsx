@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Bell, Search, User } from "lucide-react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Bell, Search, User, X } from "lucide-react";
 import { KaamSetuLogo } from "./KaamSetuLogo";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { useApp } from "../context/AppContext";
@@ -8,6 +8,7 @@ import { useLanguage } from "../i18n/LanguageContext";
 import {
   getMyNotifications,
   markNotificationRead,
+  archiveNotification,
   type AppNotification,
 } from "../services/notificationService";
 import { getApplicationStatusDoc } from "../services/jobService";
@@ -31,6 +32,7 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
   const { userProfile, userRole, acceptJobOffer, rejectJobOffer } = useApp();
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -72,15 +74,11 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
     const ok = await acceptJobOffer(appId);
     if (ok) {
       setOfferStatuses((prev) => ({ ...prev, [appId]: "in_progress" }));
-      if (!n.isRead) {
-        try {
-          await markNotificationRead(n.id);
-          setNotifications((prev) =>
-            prev.map((x) => (x.id === n.id ? { ...x, isRead: true } : x)),
-          );
-        } catch (err) {
-          console.error("Failed to mark notification read:", err);
-        }
+      try {
+        await archiveNotification(n.id);
+        setNotifications((prev) => prev.filter((x) => x.id !== n.id));
+      } catch (err) {
+        console.error("Failed to archive notification:", err);
       }
     }
     setBusyOfferId(null);
@@ -97,15 +95,11 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
     const ok = await rejectJobOffer(appId);
     if (ok) {
       setOfferStatuses((prev) => ({ ...prev, [appId]: "offer_declined" }));
-      if (!n.isRead) {
-        try {
-          await markNotificationRead(n.id);
-          setNotifications((prev) =>
-            prev.map((x) => (x.id === n.id ? { ...x, isRead: true } : x)),
-          );
-        } catch (err) {
-          console.error("Failed to mark notification read:", err);
-        }
+      try {
+        await archiveNotification(n.id);
+        setNotifications((prev) => prev.filter((x) => x.id !== n.id));
+      } catch (err) {
+        console.error("Failed to archive notification:", err);
       }
     }
     setBusyOfferId(null);
@@ -113,13 +107,13 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
-  // Load notifications whenever the logged-in user changes
+  // Load notifications whenever the logged-in user changes or route changes
   useEffect(() => {
     if (!userProfile.uid) return;
     getMyNotifications(userProfile.uid)
       .then(setNotifications)
       .catch((err) => console.error("Failed to load notifications:", err));
-  }, [userProfile.uid]);
+  }, [userProfile.uid, location.pathname]);
 
   // Close the dropdown if you click anywhere outside it
   useEffect(() => {
@@ -135,7 +129,7 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-   const handleBellClick = () => {
+  const handleBellClick = () => {
     const willOpen = !showDropdown;
     setShowDropdown(willOpen);
 
@@ -148,19 +142,72 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
   };
 
   const handleNotificationClick = async (notification: AppNotification) => {
-    if (!notification.isRead) {
+    // 1. Job offers: must remain visible until worker explicitly accepts or rejects them.
+    if (notification.type === "job_offer") {
+      const appId = getOfferApplicationId(notification);
+      const currentStatus = appId ? offerStatuses[appId] : undefined;
+
+      // If pending, mark as read so badge decrements, but do NOT archive or hide.
+      if (!currentStatus || currentStatus === "offered") {
+        if (!notification.isRead) {
+          try {
+            await markNotificationRead(notification.id);
+            setNotifications((prev) =>
+              prev.map((n) =>
+                n.id === notification.id ? { ...n, isRead: true } : n,
+              ),
+            );
+          } catch (err) {
+            console.error("Failed to mark notification read:", err);
+          }
+        }
+        return;
+      }
+
+      // If already resolved or unavailable, clicking it archives it
       try {
-        await markNotificationRead(notification.id);
+        await archiveNotification(notification.id);
         setNotifications((prev) =>
-          prev.map((n) =>
-            n.id === notification.id ? { ...n, isRead: true } : n,
-          ),
+          prev.filter((n) => n.id !== notification.id),
         );
       } catch (err) {
-        console.error("Failed to mark notification read:", err);
+        console.error("Failed to archive notification:", err);
       }
+      setShowDropdown(false);
+      return;
     }
+
+    // 2. New message: archive notification and navigate to the conversation
+    if (notification.type === "new_message") {
+      setShowDropdown(false);
+      try {
+        await archiveNotification(notification.id);
+        setNotifications((prev) =>
+          prev.filter((n) => n.id !== notification.id),
+        );
+      } catch (err) {
+        console.error("Failed to archive message notification:", err);
+      }
+
+      if (notification.relatedId) {
+        const isEmployer = window.location.pathname.startsWith("/employer");
+        navigate(isEmployer ? "/employer-messages" : "/messages", {
+          state: { conversationId: notification.relatedId },
+        });
+      }
+      return;
+    }
+
+    // 3. Informational notifications: archive when clicked
     setShowDropdown(false);
+    try {
+      await archiveNotification(notification.id);
+      setNotifications((prev) =>
+        prev.filter((n) => n.id !== notification.id),
+      );
+    } catch (err) {
+      console.error("Failed to archive notification:", err);
+    }
   };
 
   return (
@@ -245,12 +292,43 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
                             }`}
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <p className="text-xs font-bold text-gray-900">
-                                {n.title}
-                              </p>
-                              {!n.isRead && (
-                                <span className="w-1.5 h-1.5 rounded-full bg-[#15803D] mt-1 shrink-0" />
-                              )}
+                              <div>
+                                <p className="text-[11px] font-semibold text-[#15803D]">
+                                  {n.senderName || "KaamSetu"}
+                                </p>
+                                <p className="text-xs font-bold text-gray-900">
+                                  {n.title}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {!n.isRead && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-[#15803D]" />
+                                )}
+                                {n.type !== "job_offer" && (
+                                  <button
+                                    type="button"
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      try {
+                                        await archiveNotification(n.id);
+                                        setNotifications((prev) =>
+                                          prev.filter((x) => x.id !== n.id),
+                                        );
+                                      } catch (err) {
+                                        console.error(
+                                          "Failed to dismiss notification:",
+                                          err,
+                                        );
+                                      }
+                                    }}
+                                    className="text-gray-300 hover:text-gray-600 p-0.5 rounded transition-colors"
+                                    title="Dismiss"
+                                    aria-label="Dismiss notification"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
                             <p className="text-xs text-gray-600 mt-0.5">
                               {n.message}

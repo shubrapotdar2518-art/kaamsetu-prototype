@@ -1,7 +1,3 @@
-// src/services/notificationService.ts
-// Handles creating and reading notifications for a user
-// (e.g. "A worker applied to your job", "Your application was accepted").
-
 import {
   collection,
   addDoc,
@@ -29,40 +25,42 @@ export type NotificationType =
 export interface AppNotification {
   id: string;
   userId: string;
+  senderId?: string;
+  senderName?: string;
   type: NotificationType;
   title: string;
   message: string;
   relatedId: string | null;
   isRead: boolean;
+  isArchived?: boolean;
+  archivedAt?: { seconds: number } | null;
   createdAt?: { seconds: number } | null;
 }
 
-/**
- * Create a notification for a specific user.
- * Called automatically by other services (e.g. jobService) — you usually
- * won't call this directly from a page.
- */
 export async function createNotification(
   userId: string,
   type: NotificationType,
   title: string,
   message: string,
   relatedId: string | null = null,
+  senderId: string | null = null,
+  senderName: string = "KaamSetu",
 ): Promise<void> {
   await addDoc(collection(db, "notifications"), {
     userId,
+    senderId,
+    senderName,
     type,
     title,
     message,
     relatedId,
     isRead: false,
+    isArchived: false,
+    archivedAt: null,
     createdAt: serverTimestamp(),
   });
 }
 
-/**
- * Get the most recent 20 notifications for one user, newest first.
- */
 export async function getMyNotifications(
   userId: string,
 ): Promise<AppNotification[]> {
@@ -70,22 +68,68 @@ export async function getMyNotifications(
     collection(db, "notifications"),
     where("userId", "==", userId),
     orderBy("createdAt", "desc"),
-    limit(20),
+    limit(40),
   );
+
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({
-    id: d.id,
-    ...(d.data() as Omit<AppNotification, "id">),
-  }));
+
+  return snap.docs
+    .map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<AppNotification, "id">),
+    }))
+    .filter((n) => !n.isArchived);
 }
 
-/**
- * Mark one notification as read (e.g. when the user taps on it).
- */
 export async function markNotificationRead(
   notificationId: string,
 ): Promise<void> {
   await updateDoc(doc(db, "notifications", notificationId), {
     isRead: true,
   });
+}
+
+export async function archiveNotification(
+  notificationId: string,
+): Promise<void> {
+  await updateDoc(doc(db, "notifications", notificationId), {
+    isArchived: true,
+    isRead: true,
+    archivedAt: serverTimestamp(),
+  });
+}
+
+export async function archiveNotificationsByRelatedId(
+  userId: string,
+  relatedId: string,
+  type?: NotificationType,
+): Promise<void> {
+  try {
+    const q = query(
+      collection(db, "notifications"),
+      where("userId", "==", userId),
+      where("relatedId", "==", relatedId),
+    );
+
+    const snap = await getDocs(q);
+
+    const updatePromises = snap.docs
+      .filter((d) => {
+        const data = d.data();
+        if (data.isArchived) return false;
+        if (type && data.type !== type) return false;
+        return true;
+      })
+      .map((d) =>
+        updateDoc(d.ref, {
+          isArchived: true,
+          isRead: true,
+          archivedAt: serverTimestamp(),
+        }),
+      );
+
+    await Promise.all(updatePromises);
+  } catch (err) {
+    console.error("Error archiving notifications by relatedId:", err);
+  }
 }

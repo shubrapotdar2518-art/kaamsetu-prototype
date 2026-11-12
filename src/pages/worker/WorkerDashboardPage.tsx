@@ -16,10 +16,6 @@ export const WorkerDashboardPage: React.FC = () => {
 
   const firstName = userProfile.name ? userProfile.name.split(' ')[0] : 'Worker';
 
-  // Filter recommended vs available jobs
-  const recommendedJobs = jobs.filter((j) => j.matchPercentage && j.matchPercentage > 85);
-  const availableJobs = jobs.filter((j) => !j.matchPercentage || j.matchPercentage <= 85);
-
   return (
     <DashboardLayout type="worker">
       <div className="space-y-6 sm:space-y-8">
@@ -50,66 +46,42 @@ export const WorkerDashboardPage: React.FC = () => {
 
         {/* Main Grid: 2 columns on large screens (Left: Jobs, Right: Chat Assistant & Schemes) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8">
-          {/* Left Column: Recommended & Available Jobs (8 cols) */}
-          <div className="lg:col-span-7 xl:col-span-8 space-y-8">
-            {/* 2. Recommended Jobs Section */}
+          {/* Left Column: Consolidated Available Jobs (8 cols) */}
+          <div className="lg:col-span-7 xl:col-span-8 space-y-6">
             <section>
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h2 className="text-lg sm:text-xl font-extrabold text-gray-900 flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-[#15803D]" />
-                    <span>{t('recommendedJobs', 'Recommended Jobs')}</span>
-                  </h2>
-                  <p className="text-xs text-gray-500 font-medium">
-                    {userProfile.skills
-                      ? `Handpicked jobs matching your ${userProfile.skills} skills`
-                      : 'Handpicked jobs matching verified skills in your area'}
-                  </p>
-                </div>
-
-                <Link
-                  to="/recommended-jobs"
-                  className="text-xs font-bold text-[#15803D] hover:text-[#166534] flex items-center gap-1 group"
-                >
-                  <span>{t('all', 'View All')}</span>
-                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-                </Link>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {recommendedJobs.slice(0, 2).map((job) => (
-                  <JobCard key={job.id} job={job} />
-                ))}
-              </div>
-            </section>
-
-            {/* 3. Available Jobs Section */}
-            <section>
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-lg sm:text-xl font-extrabold text-gray-900 flex items-center gap-2">
-                    <Briefcase className="w-5 h-5 text-[#F97316]" />
+                    <Briefcase className="w-5 h-5 text-[#15803D]" />
                     <span>{t('availableJobs', 'Available Jobs')}</span>
                   </h2>
                   <p className="text-xs text-gray-500 font-medium">
-                    {t('availableJobsSubtitle', 'Recent daily wage opportunities nearby')}
+                    {userProfile.skills
+                      ? `Handpicked matches for your ${userProfile.skills} skills and open positions nearby`
+                      : 'Verified opportunities matching your skills and location'}
                   </p>
                 </div>
 
                 <Link
                   to="/available-jobs"
-                  className="text-xs font-bold text-[#15803D] hover:text-[#166534] flex items-center gap-1 group"
+                  className="text-xs font-bold text-[#15803D] hover:text-[#166534] flex items-center gap-1 group cursor-pointer"
                 >
                   <span>{t('all', 'View All')}</span>
                   <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </Link>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {availableJobs.slice(0, 2).map((job) => (
-                  <JobCard key={job.id} job={job} />
-                ))}
-              </div>
+              {jobs.length === 0 ? (
+                <div className="p-8 text-center bg-white rounded-2xl border border-gray-100 shadow-2xs">
+                  <p className="text-xs text-gray-500">{t('noJobsAvailable', 'No jobs available right now.')}</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {jobs.slice(0, 4).map((job) => (
+                    <JobCard key={job.id} job={job} />
+                  ))}
+                </div>
+              )}
             </section>
           </div>
 
