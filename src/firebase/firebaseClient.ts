@@ -13,6 +13,7 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
+
 // Prevents "Firebase already initialized" error if this file
 // is somehow imported twice during development.
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);

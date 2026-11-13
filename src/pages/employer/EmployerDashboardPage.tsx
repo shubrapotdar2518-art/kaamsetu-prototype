@@ -237,9 +237,16 @@ export const EmployerDashboardPage: React.FC = () => {
               >
                 <div>
                   <div className="flex items-start justify-between gap-2 mb-2">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-[#15803D] border border-emerald-200">
-                      {post.trade}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-[#15803D] border border-emerald-200">
+                        {post.trade}
+                      </span>
+                      {post.status === 'Urgent' && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-[#FFEDD5] text-[#C2410C] border border-[#FDBA74]">
+                          🚨 SOS
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[11px] font-medium text-gray-400 flex items-center gap-1">
                       <Clock className="w-3 h-3" />
                       {post.postedDate}

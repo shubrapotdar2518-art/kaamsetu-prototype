@@ -9,6 +9,7 @@ import {
   orderBy,
   limit,
   serverTimestamp,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "../firebase/firebaseClient";
 
@@ -19,6 +20,8 @@ export type NotificationType =
   | "job_completed"
   | "new_message"
   | "job_offer"
+  | "emergency_job_offer"
+  | "emergency_dispatch_exhausted"
   | "offer_accepted"
   | "offer_rejected"
   | "completion_requested"
@@ -39,6 +42,7 @@ export interface AppNotification {
   isRead: boolean;
   isArchived?: boolean;
   archivedAt?: { seconds: number } | null;
+  expiresAt?: { seconds: number } | null;
   createdAt?: { seconds: number } | null;
 }
 
@@ -50,6 +54,7 @@ export async function createNotification(
   relatedId: string | null = null,
   senderId: string | null = null,
   senderName: string = "KaamSetu",
+  expiresAt?: { seconds: number } | null,
 ): Promise<void> {
   await addDoc(collection(db, "notifications"), {
     userId,
@@ -63,6 +68,9 @@ export async function createNotification(
     isArchived: false,
     archivedAt: null,
     createdAt: serverTimestamp(),
+    ...(expiresAt
+      ? { expiresAt: Timestamp.fromMillis(expiresAt.seconds * 1000) }
+      : {}),
   });
 }
 

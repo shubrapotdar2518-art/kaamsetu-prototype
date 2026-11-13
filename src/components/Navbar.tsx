@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Bell, Search, User, X } from "lucide-react";
+import { Bell, Search, User, X, Clock, Zap } from "lucide-react";
 import { KaamSetuLogo } from "./KaamSetuLogo";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { useApp } from "../context/AppContext";
@@ -29,7 +29,14 @@ const timeAgo = (seconds?: number | null): string => {
 };
 
 export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
-  const { userProfile, userRole, acceptJobOffer, rejectJobOffer } = useApp();
+  const {
+    userProfile,
+    userRole,
+    acceptJobOffer,
+    rejectJobOffer,
+    acceptEmergencyJobOffer,
+    rejectEmergencyJobOffer,
+  } = useApp();
   const { t } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
@@ -37,6 +44,20 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Current system epoch seconds for live countdown timers
+  const [currentTimeSeconds, setCurrentTimeSeconds] = useState(
+    Math.floor(Date.now() / 1000),
+  );
+
+  // Live timer tick when dropdown is open
+  useEffect(() => {
+    if (!showDropdown) return;
+    const interval = setInterval(() => {
+      setCurrentTimeSeconds(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [showDropdown]);
 
   // ─── Job offer (Accept / Reject) support ───
   // Current Firestore status of each offer, keyed by application id (jobId_workerId)
@@ -51,7 +72,9 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
   // Whenever notifications change, look up the real status of each offer
   useEffect(() => {
     if (!userProfile.uid) return;
-    const offers = notifications.filter((n) => n.type === "job_offer");
+    const offers = notifications.filter(
+      (n) => n.type === "job_offer" || n.type === "emergency_job_offer",
+    );
     offers.forEach(async (n) => {
       const appId = getOfferApplicationId(n);
       if (!appId) return;
@@ -71,7 +94,12 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
     const appId = getOfferApplicationId(n);
     if (!appId || busyOfferId) return;
     setBusyOfferId(appId);
-    const ok = await acceptJobOffer(appId);
+
+    const isEmergency = n.type === "emergency_job_offer";
+    const ok = isEmergency
+      ? await acceptEmergencyJobOffer(appId)
+      : await acceptJobOffer(appId);
+
     if (ok) {
       setOfferStatuses((prev) => ({ ...prev, [appId]: "in_progress" }));
       try {
@@ -92,7 +120,12 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
     const appId = getOfferApplicationId(n);
     if (!appId || busyOfferId) return;
     setBusyOfferId(appId);
-    const ok = await rejectJobOffer(appId);
+
+    const isEmergency = n.type === "emergency_job_offer";
+    const ok = isEmergency
+      ? await rejectEmergencyJobOffer(appId)
+      : await rejectJobOffer(appId);
+
     if (ok) {
       setOfferStatuses((prev) => ({ ...prev, [appId]: "offer_declined" }));
       try {
@@ -142,13 +175,22 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
   };
 
   const handleNotificationClick = async (notification: AppNotification) => {
-    // 1. Job offers: must remain visible until worker explicitly accepts or rejects them.
-    if (notification.type === "job_offer") {
+    // 1. Job offers (normal and emergency): must remain visible until worker explicitly accepts or rejects them, or until expired.
+    if (notification.type === "job_offer" || notification.type === "emergency_job_offer") {
       const appId = getOfferApplicationId(notification);
       const currentStatus = appId ? offerStatuses[appId] : undefined;
 
-      // If pending, mark as read so badge decrements, but do NOT archive or hide.
-      if (!currentStatus || currentStatus === "offered") {
+      const expiresAtSec =
+        typeof notification.expiresAt === "number"
+          ? notification.expiresAt
+          : notification.expiresAt?.seconds;
+      const isExpired =
+        notification.type === "emergency_job_offer" &&
+        (currentStatus === "expired" ||
+          (expiresAtSec !== undefined && currentTimeSeconds > expiresAtSec));
+
+      // If pending and unexpired, mark as read so badge decrements, but do NOT archive or hide.
+      if (!isExpired && (!currentStatus || currentStatus === "offered")) {
         if (!notification.isRead) {
           try {
             await markNotificationRead(notification.id);
@@ -164,7 +206,7 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
         return;
       }
 
-      // If already resolved or unavailable, clicking it archives it
+      // If already resolved, expired, or unavailable, clicking it archives it
       try {
         await archiveNotification(notification.id);
         setNotifications((prev) =>
@@ -268,15 +310,40 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
                         </p>
                       )}
 
-                                            {notifications.map((n) => {
+                      {notifications.map((n) => {
+                        const isJobOffer = n.type === "job_offer";
+                        const isEmergencyOffer = n.type === "emergency_job_offer";
                         const offerAppId =
-                          n.type === "job_offer"
+                          isJobOffer || isEmergencyOffer
                             ? getOfferApplicationId(n)
                             : null;
                         const offerStatus = offerAppId
                           ? offerStatuses[offerAppId]
                           : undefined;
-                        const isBusy = offerAppId !== null && busyOfferId === offerAppId;
+                        const isBusy =
+                          offerAppId !== null && busyOfferId === offerAppId;
+
+                        const expiresAtSec =
+                          typeof n.expiresAt === "number"
+                            ? n.expiresAt
+                            : n.expiresAt?.seconds;
+                        const remainingSeconds = expiresAtSec
+                          ? Math.max(0, expiresAtSec - currentTimeSeconds)
+                          : 0;
+                        const isEmergencyExpired =
+                          isEmergencyOffer &&
+                          (offerStatus === "expired" ||
+                            (expiresAtSec !== undefined && remainingSeconds <= 0));
+
+                        const mins = Math.floor(remainingSeconds / 60);
+                        const secs = remainingSeconds % 60;
+                        const formattedCountdown = `${mins}m ${secs < 10 ? "0" : ""}${secs}s`;
+
+                        const canDismiss =
+                          (!isJobOffer && !isEmergencyOffer) ||
+                          isEmergencyExpired ||
+                          offerStatus === "in_progress" ||
+                          offerStatus === "offer_declined";
 
                         return (
                           <div
@@ -288,23 +355,46 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
                               if (e.key === "Enter") handleNotificationClick(n);
                             }}
                             className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer ${
-                              !n.isRead ? "bg-emerald-50/50" : ""
+                              !n.isRead
+                                ? isEmergencyOffer
+                                  ? "bg-orange-50/60"
+                                  : "bg-emerald-50/50"
+                                : ""
                             }`}
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div>
-                                <p className="text-[11px] font-semibold text-[#15803D]">
-                                  {n.senderName || "KaamSetu"}
-                                </p>
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                  <p
+                                    className={`text-[11px] font-semibold ${
+                                      isEmergencyOffer
+                                        ? "text-orange-600"
+                                        : "text-[#15803D]"
+                                    }`}
+                                  >
+                                    {n.senderName || "KaamSetu"}
+                                  </p>
+                                  {isEmergencyOffer && (
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-orange-100 text-orange-700 border border-orange-300">
+                                      🚨 SOS
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-xs font-bold text-gray-900">
                                   {n.title}
                                 </p>
                               </div>
                               <div className="flex items-center gap-1.5 shrink-0">
                                 {!n.isRead && (
-                                  <span className="w-1.5 h-1.5 rounded-full bg-[#15803D]" />
+                                  <span
+                                    className={`w-1.5 h-1.5 rounded-full ${
+                                      isEmergencyOffer
+                                        ? "bg-orange-500"
+                                        : "bg-[#15803D]"
+                                    }`}
+                                  />
                                 )}
-                                {n.type !== "job_offer" && (
+                                {canDismiss && (
                                   <button
                                     type="button"
                                     onClick={async (e) => {
@@ -334,7 +424,8 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
                               {n.message}
                             </p>
 
-                            {n.type === "job_offer" && offerStatus === "offered" && (
+                            {/* Normal Job Offer Controls */}
+                            {isJobOffer && offerStatus === "offered" && (
                               <div className="flex items-center gap-2 mt-2">
                                 <button
                                   type="button"
@@ -355,17 +446,17 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
                               </div>
                             )}
 
-                            {n.type === "job_offer" && offerStatus === "in_progress" && (
+                            {isJobOffer && offerStatus === "in_progress" && (
                               <p className="text-[11px] font-bold text-[#15803D] mt-2">
                                 ✓ Offer accepted
                               </p>
                             )}
-                            {n.type === "job_offer" && offerStatus === "offer_declined" && (
+                            {isJobOffer && offerStatus === "offer_declined" && (
                               <p className="text-[11px] font-bold text-red-600 mt-2">
                                 ✕ Offer declined
                               </p>
                             )}
-                            {n.type === "job_offer" &&
+                            {isJobOffer &&
                               offerStatus !== undefined &&
                               !["offered", "in_progress", "offer_declined"].includes(
                                 offerStatus,
@@ -374,6 +465,62 @@ export const Navbar: React.FC<NavbarProps> = ({ type = "worker" }) => {
                                   Offer no longer available
                                 </p>
                               )}
+
+                            {/* Emergency Job Offer Controls */}
+                            {isEmergencyOffer &&
+                              offerStatus === "offered" &&
+                              !isEmergencyExpired && (
+                                <div className="mt-2 space-y-2">
+                                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-orange-50 border border-orange-200 text-orange-700 text-xs font-bold">
+                                    <Clock className="w-3.5 h-3.5 animate-pulse text-orange-600" />
+                                    <span>
+                                      Response window: {formattedCountdown} remaining
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={isBusy}
+                                      onClick={(e) => handleAcceptOffer(e, n)}
+                                      className="px-3 py-1.5 rounded-lg bg-[#F97316] hover:bg-[#EA580C] disabled:opacity-50 text-white text-[11px] font-bold shadow-xs transition-colors flex items-center gap-1"
+                                    >
+                                      <Zap className="w-3 h-3" />
+                                      Accept Emergency Offer
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isBusy}
+                                      onClick={(e) => handleRejectOffer(e, n)}
+                                      className="px-3 py-1.5 rounded-lg bg-white hover:bg-red-50 disabled:opacity-50 text-red-600 border border-red-200 text-[11px] font-bold transition-colors"
+                                    >
+                                      Reject
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                            {isEmergencyOffer && isEmergencyExpired && (
+                              <div className="mt-2 p-2 rounded-lg bg-gray-50 border border-gray-200 text-gray-500 text-xs font-semibold flex items-center justify-between">
+                                <span className="flex items-center gap-1 text-red-600 font-bold">
+                                  ✕ Offer Expired (5-minute window passed)
+                                </span>
+                                <span className="text-[10px] text-gray-400">
+                                  Next worker alerted
+                                </span>
+                              </div>
+                            )}
+
+                            {isEmergencyOffer && offerStatus === "in_progress" && (
+                              <p className="text-[11px] font-bold text-[#15803D] mt-2">
+                                ✓ Emergency offer accepted — Assigned!
+                              </p>
+                            )}
+
+                            {isEmergencyOffer && offerStatus === "offer_declined" && (
+                              <p className="text-[11px] font-bold text-red-600 mt-2">
+                                ✕ Offer declined
+                              </p>
+                            )}
 
                             <p className="text-[10px] text-gray-400 mt-1">
                               {timeAgo(n.createdAt?.seconds)}

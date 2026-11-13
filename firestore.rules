@@ -1,0 +1,179 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================
+    // 🛡️ HELPER FUNCTIONS
+    // ==========================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Check if the current user is an admin
+    function isAdmin() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'admin';
+    }
+
+    // ==========================================
+    // 👤 USERS COLLECTION
+    // ==========================================
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 👷 WORKERS COLLECTION
+    // ==========================================
+    match /workers/{userId} {
+      // Authenticated users (employers and workers) can browse workers
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId);
+      // Profile updates by worker; availability toggles by worker or assignment flows
+      allow update: if isOwner(userId) || isAuthenticated();
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    // ==========================================
+    // 🏢 EMPLOYERS COLLECTION
+    // ==========================================
+    match /employers/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAuthenticated();
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    // ==========================================
+    // 💼 JOBS COLLECTION
+    // ==========================================
+    match /jobs/{jobId} {
+      // Authenticated users can read jobs
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.employerId == request.auth.uid;
+      // Employer who owns the job can update it;
+      // Workers participating in assignments can update hiredCount/assignedWorkerIds/emergencyStatus
+      // as long as employerId is preserved.
+      allow update: if isAuthenticated() && (
+        resource.data.employerId == request.auth.uid ||
+        request.resource.data.employerId == resource.data.employerId
+      );
+      allow delete: if isAuthenticated() && resource.data.employerId == request.auth.uid;
+    }
+
+    // ==========================================
+    // 📋 APPLICATIONS COLLECTION
+    // ID format: {jobId}_{workerId}
+    // ==========================================
+    match /applications/{appId} {
+      // Both the worker and employer involved can read the application
+      allow read: if isAuthenticated() && (
+        resource.data.workerId == request.auth.uid ||
+        resource.data.employerId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Separate creation conditions:
+      // 1. Worker applies for a job
+      // 2. Employer sends a normal direct job offer
+      // 3. Emergency offer created during dispatch
+      allow create: if isAuthenticated() && (
+        // 1. Normal worker application
+        (request.resource.data.workerId == request.auth.uid && request.resource.data.status == 'pending') ||
+        // 2. Normal employer direct offer
+        (request.resource.data.employerId == request.auth.uid && request.resource.data.status == 'offered' && (!('urgency' in request.resource.data) || request.resource.data.urgency != 'emergency')) ||
+        // 3. Emergency job offer dispatched by employer
+        (request.resource.data.employerId == request.auth.uid && request.resource.data.status == 'offered' && request.resource.data.urgency == 'emergency')
+      );
+
+      // Updates for application lifecycle:
+      // - Worker accepts ('in_progress') or declines ('offer_declined') an offer
+      // - Dispatch queue or timer marks offer as 'expired'
+      // - Worker requests completion ('completion_requested') and verifies OTP ('completed')
+      // - Employer confirms payment ('paid')
+      allow update: if isAuthenticated() && (
+        resource.data.workerId == request.auth.uid ||
+        resource.data.employerId == request.auth.uid ||
+        isAdmin()
+      ) && (
+        // Prevent workers from confirming their own payment
+        !(request.resource.data.paymentStatus == 'paid' && resource.data.paymentStatus != 'paid' && request.auth.uid != resource.data.employerId)
+      );
+
+      allow delete: if isAdmin() || (isAuthenticated() && (resource.data.workerId == request.auth.uid || resource.data.employerId == request.auth.uid));
+    }
+
+    // ==========================================
+    // ⭐ RATINGS COLLECTION
+    // ID format: {jobId}_{reviewerId}
+    // ==========================================
+    match /ratings/{ratingId} {
+      // Published reviews can be read by authenticated users
+      allow read: if isAuthenticated();
+
+      // Only the authenticated reviewer can submit, rating must be 1 to 5, one review per job
+      allow create: if isAuthenticated() &&
+        request.resource.data.reviewerId == request.auth.uid &&
+        request.resource.data.rating >= 1 &&
+        request.resource.data.rating <= 5;
+
+      allow update: if isAuthenticated() && resource.data.reviewerId == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 🔔 NOTIFICATIONS COLLECTION
+    // ==========================================
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // ==========================================
+    // 🏛️ WELFARE SCHEMES COLLECTION
+    // ==========================================
+    match /welfareSchemes/{schemeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ==========================================
+    // 🤖 CHATBOT FAQS COLLECTION
+    // ==========================================
+    match /chatbotFAQs/{faqId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ==========================================
+    // 🚩 REPORTS & COMPLAINTS COLLECTION
+    // ==========================================
+    match /reportsComplaints/{reportId} {
+      allow create: if isAuthenticated() && request.resource.data.reporterId == request.auth.uid;
+      allow read: if isAuthenticated() && (resource.data.reporterId == request.auth.uid || isAdmin());
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 💬 CONVERSATIONS & MESSAGES
+    // ==========================================
+    match /conversations/{convId} {
+      allow read, write: if isAuthenticated();
+      match /messages/{messageId} {
+        allow read, write: if isAuthenticated();
+      }
+    }
+  }
+}

@@ -34,6 +34,8 @@ import {
   sendDirectJobOfferDoc,
   acceptJobOfferDoc,
   rejectJobOfferDoc,
+  acceptEmergencyJobOfferDoc,
+  rejectEmergencyJobOfferDoc,
   requestJobCompletionDoc,
   verifyJobCompletionOtpDoc,
   requestJobPaymentDoc,
@@ -149,7 +151,7 @@ interface AppContextType {
     duration?: string;
     description?: string;
     urgency?: "normal" | "emergency";
-  }) => Promise<void>;
+  }) => Promise<string | undefined>;
   applications: JobApplication[];
   updateApplicationStatus: (
     id: string,
@@ -181,6 +183,8 @@ interface AppContextType {
   sendDirectJobOffer: (jobId: string, workerId: string) => Promise<boolean>;
   acceptJobOffer: (applicationId: string) => Promise<boolean>;
   rejectJobOffer: (applicationId: string) => Promise<boolean>;
+  acceptEmergencyJobOffer: (applicationId: string) => Promise<boolean>;
+  rejectEmergencyJobOffer: (applicationId: string) => Promise<boolean>;
   requestJobCompletion: (jobId: string) => Promise<CompletionRequestResult | null>;
   verifyJobCompletionOtp: (jobId: string, otp: string) => Promise<boolean>;
   requestJobPayment: (
@@ -775,14 +779,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     duration?: string;
     description?: string;
     urgency?: "normal" | "emergency";
-  }) => {
+  }): Promise<string | undefined> => {
     if (!userProfile.uid) {
       showToast("Please login first.", "error");
       return;
     }
 
     try {
-      await postJobDoc({
+      const jobId = await postJobDoc({
         employerId: userProfile.uid,
         employerName:
           userProfile.companyName || userProfile.name || "Verified Employer",
@@ -798,6 +802,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
       showToast("Job posted successfully! Broadcasted to local workers.");
       await refreshJobs();
+      return jobId;
     } catch (err) {
       console.error("addJobPost error:", err);
       showToast("Failed to post job. Please try again.", "error");
@@ -927,6 +932,62 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : "Could not decline the offer.",
+        "error",
+      );
+      return false;
+    }
+  };
+
+  // Worker: accept an emergency job offer (enforces 5-minute expiry, marks unavailable, assigns worker)
+  const acceptEmergencyJobOffer = async (
+    applicationId: string,
+  ): Promise<boolean> => {
+    if (!userProfile.uid) {
+      showToast("Please login first.", "error");
+      return false;
+    }
+
+    try {
+      const res = await acceptEmergencyJobOfferDoc(
+        applicationId,
+        userProfile.uid,
+      );
+      showToast(res.message);
+      await refreshJobs();
+      return true;
+    } catch (err) {
+      showToast(
+        err instanceof Error
+          ? err.message
+          : "Could not accept the emergency offer.",
+        "error",
+      );
+      return false;
+    }
+  };
+
+  // Worker: reject an emergency job offer (advances to next nearest worker immediately)
+  const rejectEmergencyJobOffer = async (
+    applicationId: string,
+  ): Promise<boolean> => {
+    if (!userProfile.uid) {
+      showToast("Please login first.", "error");
+      return false;
+    }
+
+    try {
+      const res = await rejectEmergencyJobOfferDoc(
+        applicationId,
+        userProfile.uid,
+      );
+      showToast(res.message, "info");
+      await refreshJobs();
+      return true;
+    } catch (err) {
+      showToast(
+        err instanceof Error
+          ? err.message
+          : "Could not decline the emergency offer.",
         "error",
       );
       return false;
@@ -1140,6 +1201,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         sendDirectJobOffer,
         acceptJobOffer,
         rejectJobOffer,
+        acceptEmergencyJobOffer,
+        rejectEmergencyJobOffer,
         requestJobCompletion,
         verifyJobCompletionOtp,
         requestJobPayment,

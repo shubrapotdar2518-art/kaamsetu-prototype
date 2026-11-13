@@ -54,11 +54,45 @@ function toJob(d: any): FirestoreJob {
 export async function fetchOpenJobs(): Promise<FirestoreJob[]> {
   const snap = await getDocs(
     query(collection(db, "jobs"), where("status", "==", "open")),
-  );
-  return snap.docs
+  )
+  console.table(
+  snap.docs.map((d) => ({
+    jobId: d.id,
+    employerId: d.data().employerId,
+    employerName: d.data().employerName,
+  })),
+);
+
+  const jobs = snap.docs
     .map(toJob)
-    .filter((j) => (j.hiredCount ?? 0) < (j.openings ?? 1))
-    .sort((a, b) => (b.postedAt?.seconds ?? 0) - (a.postedAt?.seconds ?? 0));
+    .filter((j) => (j.hiredCount ?? 0) < (j.openings ?? 1));
+
+  const validJobs = await Promise.all(
+    jobs.map(async (job) => {
+      if (!job.employerId) return null;
+
+      const employerSnap = await getDoc(
+        doc(db, "users", job.employerId),
+      );
+
+      if (!employerSnap.exists()) return null;
+
+      const employerData = employerSnap.data();
+
+      if (employerData.userType !== "employer") return null;
+
+if (employerData.isActive === false) return null;
+
+return job;
+    }),
+  );
+
+  return validJobs
+    .filter((job): job is FirestoreJob => job !== null)
+    .sort(
+      (a, b) =>
+        (b.postedAt?.seconds ?? 0) - (a.postedAt?.seconds ?? 0),
+    );
 }
 
 export async function fetchEmployerJobs(
@@ -79,6 +113,14 @@ export async function applyToJobDoc(
   employerId: string,
   jobTitle: string,
 ) {
+  // Disallow manual applications to emergency jobs (they are system-dispatched one by one)
+  const jobSnap = await getDoc(doc(db, "jobs", jobId));
+  if (jobSnap.exists() && jobSnap.data().urgency === "emergency") {
+    throw new Error(
+      "Emergency jobs are dispatched automatically to available workers nearby. Manual applications are not accepted.",
+    );
+  }
+
   const id = `${jobId}_${workerId}`;
   const existing = await getDoc(doc(db, "applications", id));
   if (existing.exists())
@@ -274,12 +316,20 @@ export async function fetchEmployerApplications(
   const results: FirestoreApplication[] = [];
   for (const d of snap.docs) {
     const a = d.data();
-    const [userSnap, workerSnap] = await Promise.all([
-      getDoc(doc(db, "users", a.workerId)),
-      getDoc(doc(db, "workers", a.workerId)),
-    ]);
-    const u = userSnap.data() ?? {};
-    const w = workerSnap.data() ?? {};
+    if (!a.workerId) continue;
+
+    let u: any = {};
+    let w: any = {};
+    try {
+      const [userSnap, workerSnap] = await Promise.all([
+        getDoc(doc(db, "users", a.workerId)).catch(() => null),
+        getDoc(doc(db, "workers", a.workerId)).catch(() => null),
+      ]);
+      if (userSnap && userSnap.exists()) u = userSnap.data();
+      if (workerSnap && workerSnap.exists()) w = workerSnap.data();
+    } catch {
+      // safe fallback
+    }
 
     let wage = 0;
     try {
@@ -1324,3 +1374,18 @@ export async function fetchEmployerJobHistory(
     (a, b) => (b.completionTimestamp ?? 0) - (a.completionTimestamp ?? 0),
   );
 }
+
+// ==========================================
+// 🚨 EMERGENCY HIRING RE-EXPORTS
+// ==========================================
+export {
+  createAndDispatchEmergencyJob,
+  acceptEmergencyJobOfferDoc,
+  rejectEmergencyJobOfferDoc,
+  checkAndAdvanceEmergencyDispatch,
+  subscribeToEmergencyJob,
+  fetchEligibleEmergencyWorkers,
+  type EligibleEmergencyWorker,
+  type EmergencyJobCreateInput,
+  type EmergencyDispatchResult,
+} from "./emergencyDispatchService";
